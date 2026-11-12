@@ -117,3 +117,29 @@ tr:last-child td { border-bottom: 0; }
 .answer.failed { border-left-color: var(--bad); }
 .answer-text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 6px 0 0; }
 .code { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; overflow-x: auto; font: 13px/1.4 ui-monospace, Consolas, monospace; margin: 8px 0 0; }
+
+/* Phone app (ADR 0009) */
+.phone { max-width: 560px; }
+.tabs { display: flex; gap: 6px; margin: -6px 0 14px; position: sticky; top: 0; background: var(--bg); padding: 6px 0; z-index: 1; }
+.tabs button { flex: 1; border: 1px solid var(--line); background: var(--card); color: var(--muted); border-radius: 10px; padding: 10px 6px; font-weight: 600; }
+.tabs button[aria-pressed='true'] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.row.spread { justify-content: space-between; }
+.stack { display: grid; gap: 10px; margin-top: 10px; }
+.stack label { display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
+.stack input, .stack select, .stack textarea { font: inherit; font-size: 16px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; }
+.secondary { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 9px; padding: 8px 14px; }
+.dialog { border: 1px solid var(--warn); background: var(--warn-soft); border-radius: 10px; padding: 12px; margin: 10px 0; }
+.dialog h3 { margin: 0 0 6px; }
+.dialog-text, .win-text { white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.45 system-ui, sans-serif; margin: 0 0 10px; }
+.win-text { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 10px; max-height: 45vh; overflow: auto; }
+.win-title { margin-top: 10px; overflow-wrap: anywhere; }
+.setup { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
+.code-big { font: 700 28px/1.2 ui-monospace, Consolas, monospace; letter-spacing: 0.08em; margin: 8px 0; }
+.win-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.win-list button { width: 100%; text-align: left; display: grid; gap: 2px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.win-name { font-weight: 600; overflow-wrap: anywhere; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-btn { background: var(--accent-soft); color: var(--accent); border: 0; border-radius: 8px; padding: 8px 12px; font-weight: 600; }
+.chip-btn:disabled { opacity: 0.5; }
+.device-row { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }

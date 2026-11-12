@@ -176,7 +176,36 @@ to Codex CLI; if Codex is not installed or fails before calling any tool, to Ant
   chosen set of servers. Dashboard "Ask Magnus": "how many windows are open, which is in
   front" answered by Codex in 49 s (2 tool calls); a request from another web page got 403.
 
-## The phone remote (ADR 0008)
+## The remote app (ADR 0009)
+**Set up once (about 10 minutes):**
+1. Install Tailscale on the PC and on the phone (tailscale.com, free personal plan) and sign in
+   with the same account on both.
+2. On the PC: `tailscale serve --bg 4747`. It prints the app's address, like
+   `https://mypc.tail1234.ts.net`. Only your own devices can open it.
+3. Start Magnus with that name: in PowerShell
+   `$env:MAGNUS_REMOTE_HOSTS='mypc.tail1234.ts.net'; npm run dashboard`.
+4. On the PC dashboard, Phones → **Pair a device**; on the phone open the address + `/pair` and
+   type the code.
+5. On the phone, Approvals → **Allow this device to answer**; on the PC, XtraOS asks: check the
+   code matches and click Allow.
+
+**Then from the phone:** Approvals (answer XtraOS dialogs), Windows (read a window, tap its
+buttons, type and press Enter), Ask (Magnus does a task).
+
+- Magnus listens on 127.0.0.1 only; Tailscale carries the phone's requests to it.
+- A paired device has a random token in an HttpOnly, Secure cookie; Magnus stores only hashes.
+- Answers to XtraOS dialogs are signed by a key that never leaves the phone; XtraOS checks them.
+- **Live (owner's PC, 2026-11-12, browser pane as the phone at `localhost:4747`):** without
+  pairing, `/m` went to `/pair` and the API answered 401; the run token did not work on the remote
+  address (401); an unconfigured address got 403; pairing from another web page got 403.
+  Paired with a one-time code; the Windows tab listed the PC's windows and showed Notepad's text
+  and controls; typing from the phone reached Notepad, but its first 16 characters were lost
+  (XtraOS typing, open); "Allow this device" opened XtraOS's dialog on the PC, the owner clicked
+  Allow; an XtraOS question was then answered "yes" from the phone in under a second. The test
+  device was removed afterwards. Not yet tried on a real phone over Tailscale.
+- Files in `~/.magnus`: `devices.json` (device names, token hashes, XtraOS approver ids).
+
+## The phone remote over Telegram (ADR 0008)
 1. In Telegram, ask @BotFather for a new bot (free); it gives a token.
 2. `magnus secret set TELEGRAM_BOT_TOKEN` (stored encrypted).
 3. `magnus remote run` (keeps running), then in another terminal `magnus remote pair`; send the

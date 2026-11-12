@@ -1,6 +1,7 @@
 import { BRAIN_NAMES, brainConfig, dashboardState, MagnusError, sync, type Action, type DashboardState } from '@magnus/core';
 import { env, refusal, syncDeps } from '@/lib/guard';
 import { AskPanel } from './ui/AskPanel';
+import { DevicesPanel } from './ui/DevicesPanel';
 import { ModeSwitch } from './ui/ModeSwitch';
 import { SyncPanel } from './ui/SyncPanel';
 
@@ -91,6 +92,8 @@ export default async function Page() {
         const b = brainConfig(e);
         return <AskPanel brains={b.order.map((id) => BRAIN_NAMES[id]).join(', then ')} servers={b.servers.join(', ')} timeoutSec={b.timeoutSec} />;
       })()}
+
+      <DevicesPanel />
 
       {planError ? (
         <Message title="Sync cannot be planned" text={planError.message} hint={planError.hint.replace(/^Run: /, '')} />

@@ -14,3 +14,17 @@ export { BRAIN_NAMES } from './brain/runners.js';
 export { envFromProcess } from './registry.js';
 export { depsWithCli, sync, type SyncDeps, type SyncOptions, type SyncResult } from './sync.js';
 export { MagnusError, type Action, type Env, type Op } from './types.js';
+export { checkAccess, type Access, type AccessConfig, type AccessRequest } from './dashboard.js';
+export {
+  claimDevice,
+  deviceByToken,
+  DEVICE_PAIR_MINUTES,
+  keyCode,
+  listDevices,
+  removeDevice,
+  setApprover,
+  startDevicePairing,
+  type Device,
+} from './remote/devices.js';
+export { findXtraosCore, xtraosCaller, type XtraosCall } from './xtraos.js';
+export { controlsFrom, type Control } from './remote/controls.js';

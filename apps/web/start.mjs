@@ -18,6 +18,10 @@ const next = require.resolve('next/dist/bin/next');
 const cli = path.join(path.dirname(require.resolve('@magnus/core')), 'cli.js');
 
 console.log(`Magnus dashboard (this PC only). Open:\n  http://127.0.0.1:${port}/api/enter?token=${token}\n`);
+// ADR 0009: addresses paired phones use (e.g. the Tailscale name); empty = remote access off.
+const remote = (process.env.MAGNUS_REMOTE_HOSTS ?? '').split(',').map((h) => h.trim()).filter(Boolean);
+const scheme = (h) => (/^(localhost|127\.0\.0\.1)(:|$)/.test(h) ? 'http' : 'https');
+if (remote.length > 0) console.log(`Paired phones open: ${remote.map((h) => `${scheme(h)}://${h}/m`).join(', ')}\n`);
 const child = spawn(process.execPath, [next, mode, '-H', '127.0.0.1', '-p', String(port)], {
   cwd: here,
   stdio: 'inherit',

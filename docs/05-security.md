@@ -37,7 +37,16 @@ Built first (slice 3.1, ADR 0008) as a Telegram bot run by the PC:
   owner their own file.
 - Approvals stay on the PC screen until slice 3.2.
 
-The rules below are for the later web app and relay (slice 3.3):
+Built next (slice 3.2, ADR 0009) as a web app reached over Tailscale:
+- Not on the internet: Tailscale connects only the owner's devices; Magnus listens on 127.0.0.1.
+- Device pairing with a one-time code made on the PC; per-device token (HttpOnly, Secure,
+  SameSite=Strict); only hashes stored; devices removed on the PC.
+- Requests: configured host only (DNS rebinding), the app's own https Origin for changes.
+- Approvals: the device's own P-256 key (not extractable) signs each answer; XtraOS adds a device
+  only after a real click on its PC dialog and checks every signature (XtraOS ADR 0076). Magnus
+  cannot answer a dialog by itself.
+
+General rules for any remote access:
 - **Pairing.** A phone is paired on the PC, in person (a code shown on the PC screen). The
   phone keeps a private key; the PC keeps the public key. Pairings can be listed and revoked.
 - **Signed commands.** Every command and every approval is signed by the phone and carries a

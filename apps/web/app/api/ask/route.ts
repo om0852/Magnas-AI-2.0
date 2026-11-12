@@ -9,7 +9,7 @@ let running = false;
 
 export async function POST(request: Request): Promise<Response> {
   const body = (await request.json().catch(() => null)) as { task?: unknown } | null;
-  return api('POST', async () => {
+  return api('POST', 'any', async () => {
     if (typeof body?.task !== 'string' || body.task.trim() === '') throw new MagnusError('BAD_ARGS', 'write a task first');
     if (body.task.length > 4000) throw new MagnusError('BAD_ARGS', 'the task is over 4,000 characters');
     if (running) throw new MagnusError('BUSY', 'another task is still running; wait for it to finish');

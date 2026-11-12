@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request): Promise<Response> {
   const body = (await request.json().catch(() => null)) as { id?: unknown; mode?: unknown } | null;
-  return api('POST', () => {
+  return api('POST', 'local', () => {
     if (typeof body?.id !== 'string' || (body.mode !== 'hub' && body.mode !== 'direct')) {
       throw new MagnusError('BAD_ARGS', 'expected { id, mode: "hub" | "direct" }');
     }

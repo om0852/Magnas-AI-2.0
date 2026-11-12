@@ -119,3 +119,58 @@ export function checkDashboardRequest(req: DashboardRequest, port: number, token
   }
   return null;
 }
+
+/** Who a request comes from, after the checks (ADR 0009). */
+export type Access =
+  | { ok: true; who: 'local' }
+  | { ok: true; who: 'device'; deviceId: string }
+  | { ok: false; status: number; message: string; remote: boolean };
+
+export interface AccessRequest {
+  method: string;
+  host: string | null;
+  origin: string | null;
+  /** The run token cookie (this PC's own browser). */
+  runToken: string | null;
+  /** The device cookie (a paired phone). */
+  deviceToken: string | null;
+}
+
+export interface AccessConfig {
+  port: number;
+  runToken: string;
+  /** Hosts the remote app is reached by, e.g. "mypc.tail1234.ts.net" (Tailscale serve). */
+  remoteHosts: readonly string[];
+  /** The device id for a cookie token, or null. */
+  device: (token: string) => string | null;
+}
+
+/**
+ * The check for every request when the app may also be used remotely (pure apart from
+ * `device`). A remote host needs a paired device; this PC's loopback address needs the run
+ * token; any other Host is refused (DNS rebinding). Changes need the app's own Origin.
+ */
+export function checkAccess(req: AccessRequest, cfg: AccessConfig): Access {
+  const host = (req.host ?? '').toLowerCase();
+  const remote = cfg.remoteHosts.map((h) => h.toLowerCase()).includes(host);
+  const local = !remote && (host === `127.0.0.1:${cfg.port}` || host === `localhost:${cfg.port}`);
+  if (!remote && !local) return { ok: false, status: 403, message: 'unknown host', remote: false };
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    // A plain-http origin only for this PC's own names; a remote host must use https.
+    const plain = local || /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(host);
+    const allowed = [`https://${host}`, ...(plain ? [`http://${host}`] : [])];
+    if (req.origin === null || !allowed.includes(req.origin.toLowerCase())) {
+      return { ok: false, status: 403, message: 'changes are accepted only from the Magnus app itself', remote };
+    }
+  }
+  if (remote) {
+    const id = req.deviceToken !== null && req.deviceToken !== '' ? cfg.device(req.deviceToken) : null;
+    return id !== null ? { ok: true, who: 'device', deviceId: id } : { ok: false, status: 401, message: 'this device is not paired', remote: true };
+  }
+  const a = Buffer.from(req.runToken ?? '');
+  const b = Buffer.from(cfg.runToken);
+  if (cfg.runToken === '' || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return { ok: false, status: 401, message: 'open the link printed by "npm run dashboard"', remote: false };
+  }
+  return { ok: true, who: 'local' };
+}
