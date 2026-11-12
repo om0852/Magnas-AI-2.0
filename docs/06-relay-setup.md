@@ -48,3 +48,12 @@ code matches). Add the page to the home screen to use it like an app.
 - The QR code holds a one-time secret (10 minutes). Don't share a photo of it.
 - The phone app's code comes from your relay; whoever controls that VM could change it.
 - A lost phone: remove it on the PC dashboard (also removes its XtraOS approvals).
+
+## Updating the phone app on the relay
+After a change in `apps/phone`, rebuild and copy only the static files (the relay keeps running):
+```
+npm run build -w @magnus/phone
+scp apps/relay/public/{app.js,index.html,style.css,manifest.webmanifest} opc@<VM-IP>:~/magnus-relay/public/
+ssh opc@<VM-IP> "sudo cp ~/magnus-relay/public/* /opt/magnus-relay/public/ && sudo chown magnus:magnus /opt/magnus-relay/public/*"
+```
+Phones load the new version the next time the page is opened (files are served with no-cache).

@@ -3,7 +3,7 @@
  * end-to-end encrypted; the relay only passes it on. Keys live in this browser's IndexedDB and
  * the private ones cannot be exported.
  */
-import { b64u, ecdhKeyPair, inviteFromFragment, type PairInvite } from '../../../packages/core/src/e2e.js';
+import { ecdhKeyPair, inviteFromFragment, type PairInvite } from '../../../packages/core/src/e2e.js';
 import { pairPhone, PhoneSession, type PhoneIdentity } from '../../../packages/core/src/phone-client.js';
 
 // ---- storage ------------------------------------------------------------------------------
@@ -364,7 +364,7 @@ async function start(): Promise<void> {
   }
   const id = await get<PhoneIdentity>('identity');
   if (!id) {
-    app.replaceChildren(header(), h('section', { class: 'card' }, h('h2', {}, 'Pair this phone'), h('p', {}, 'On your PC, open the Magnus dashboard → Phones → "Pair over the relay" and scan the QR code with this phone.'), h('p', { class: 'muted small' }, `This phone's id: ${b64u(crypto.getRandomValues(new Uint8Array(3)))}`)));
+    app.replaceChildren(header(), h('section', { class: 'card' }, h('h2', {}, 'Pair this phone'), h('p', {}, 'On your PC, open the Magnus dashboard (npm run dashboard) → "Phones over your relay" → "Pair over the relay", and scan the QR code with this phone\'s camera.')));
     return;
   }
   await main(id);

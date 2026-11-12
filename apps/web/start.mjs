@@ -28,3 +28,22 @@ const child = spawn(process.execPath, [next, mode, '-H', '127.0.0.1', '-p', Stri
   env: { ...process.env, MAGNUS_DASH_PORT: String(port), MAGNUS_DASH_TOKEN: token, MAGNUS_CLI: cli },
 });
 child.on('exit', (code) => process.exit(code ?? 0));
+
+// Open the dashboard in the browser once it answers (the link carries this run's token, so
+// typing 127.0.0.1:4747 by hand does not work). MAGNUS_NO_OPEN=1 turns this off.
+if (process.env.MAGNUS_NO_OPEN !== '1') {
+  const link = `http://127.0.0.1:${port}/api/enter?token=${token}`;
+  const open = () =>
+    process.platform === 'win32'
+      ? spawn('cmd.exe', ['/d', '/c', 'start', '""', link], { stdio: 'ignore', windowsHide: true, detached: true }).unref()
+      : spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [link], { stdio: 'ignore', detached: true }).unref();
+  const wait = async (tries) => {
+    try {
+      await fetch(`http://127.0.0.1:${port}/`);
+      open();
+    } catch {
+      if (tries > 0) setTimeout(() => void wait(tries - 1), 1000);
+    }
+  };
+  setTimeout(() => void wait(60), 1500);
+}
