@@ -1,0 +1,21 @@
+{
+  "name": "magnus-ai",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Magnus AI: one hub for your MCP servers, skills and rules across every AI tool, with a brain and a phone remote on top.",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "dashboard": "npm run build -w @magnus/core && npm run build -w @magnus/web && npm run start -w @magnus/web",
+    "dashboard:dev": "npm run build -w @magnus/core && npm run dev -w @magnus/web"
+  }
+}

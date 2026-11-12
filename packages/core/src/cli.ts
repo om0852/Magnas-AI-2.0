@@ -1,0 +1,391 @@
+#!/usr/bin/env node
+/** The `magnus` command: registry, sync, import, secrets, and the hub (stdio and HTTP). */
+import { ask, brainConfig, logAsk, realBrains, type BrainSet } from './brain/ask.js';
+import { BRAIN_NAMES } from './brain/runners.js';
+import { CLIENTS } from './clients/defs.js';
+import { setClientMode } from './dashboard.js';
+import { DEFAULT_PORT } from './hub/http.js';
+import { keyHash, newKey } from './hub/key.js';
+import { runHubStdio, startHubHttp } from './hub/start.js';
+import { importFromTools } from './import.js';
+import {
+  HUB_NAME,
+  envFromProcess,
+  initRegistry,
+  listSkills,
+  loadRegistry,
+  registryFile,
+  rulesText,
+  saveRegistry,
+  validName,
+} from './registry.js';
+import { runServer } from './run.js';
+import { dpapiProtector, removeSecret, secretNames, secretRefs, setSecret, type Protector } from './secrets.js';
+import { clientStatuses, defaultDeps, sync, type SyncDeps } from './sync.js';
+import { MagnusError, type Action, type Env, type McpServer } from './types.js';
+
+const HELP = `magnus — one hub for your MCP servers, skills and rules
+
+  magnus init                         create the registry (~/.magnus)
+  magnus status                       registry contents and installed AI tools
+  magnus sync [--apply] [--force] [--client <id>]...
+                                      show what would change; --apply writes it (with backups)
+  magnus import [--client <id>]... [--secrets] [--apply]
+                                      take the MCP servers and skills your tools already have
+                                      into the registry; --secrets stores their env values as secrets
+  magnus add-mcp <name> [--client <id>]... -- <command> [args...]
+                                      register an MCP server
+  magnus remove-mcp <name>            unregister it (the next sync removes it from the tools)
+  magnus secret set <NAME>            store a secret (typed hidden, or piped in); use it in a
+                                      server's env or args as \${secret:NAME}
+  magnus secret list | remove <NAME>  names only; values are never shown
+  magnus run <name>                   start a registered server with its secrets (used by the tools)
+  magnus mode <tool> hub|direct       hub: the tool gets ONE entry (the Magnus hub) instead of every server
+  magnus hub [--client <id>] [--servers a,b]
+                                      the hub on stdin/stdout (what a hub-mode tool starts)
+  magnus ask "<task>" [--brain codex|antigravity] [--servers a,b]
+                                      do a task with an installed AI CLI and the brain's servers
+  magnus key new | status             the Magnus key for the HTTP hub (shown once, never stored in plain)
+  magnus serve [--port N]             the hub over HTTP on 127.0.0.1 (needs the key on every request)
+`;
+
+type Out = (line: string) => void;
+
+/** What the commands need from outside; tests pass fakes. */
+export interface CliDeps {
+  /** The brains for `magnus ask`, given the servers they may use. */
+  brains: (servers: readonly string[]) => BrainSet;
+  sync: SyncDeps;
+  protector: () => Protector;
+  /** The secret value for `secret set` (hidden prompt or piped input). */
+  readSecret: () => Promise<string>;
+}
+
+function valuesOf(args: string[], flag: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === flag) {
+      const v = args[i + 1];
+      if (v === undefined) throw new MagnusError('BAD_ARGS', `${flag} needs a value`);
+      out.push(v);
+      i++;
+    }
+  }
+  return out;
+}
+
+function status(env: Env, out: Out): void {
+  const reg = loadRegistry(env);
+  const servers = Object.keys(reg.mcpServers).sort();
+  out(`Registry: ${registryFile(env)}`);
+  out(`  MCP servers (${servers.length}): ${servers.join(', ') || '-'}`);
+  const skills = listSkills(env);
+  out(`  Skills (${skills.length}): ${skills.join(', ') || '-'}`);
+  out(`  Rules: ${rulesText(env) === '' ? '-' : `${rulesText(env).split('\n').length} line(s)`}`);
+  out(`  Secrets: ${secretNames(env).length}`);
+  out('AI tools:');
+  for (const c of clientStatuses(env, reg)) {
+    const state = !c.installed ? 'not installed' : c.enabled ? 'installed' : 'installed, switched off';
+    const def = CLIENTS.find((d) => d.id === c.id);
+    const covers = [def?.mcp ? 'MCP' : '', def?.skillsDir ? 'skills' : '', def?.rulesFile ? 'rules' : '']
+      .filter((x) => x !== '')
+      .join(' + ');
+    const mode = reg.clients[c.id]?.mode === 'hub' ? '  [hub mode]' : '';
+    out(`  ${c.id.padEnd(15)} ${state.padEnd(24)} ${covers}${mode}${c.note !== undefined ? `  (${c.note})` : ''}`);
+  }
+}
+
+const SIGN: Record<Action['op'], string> = {
+  add: '+',
+  update: '~',
+  remove: '-',
+  unchanged: '=',
+  conflict: '!',
+  skip: '?',
+};
+
+function runSync(env: Env, args: string[], out: Out, deps: SyncDeps): number {
+  const apply = args.includes('--apply');
+  const only = valuesOf(args, '--client');
+  const res = sync(env, { apply, force: args.includes('--force'), ...(only.length > 0 ? { only } : {}) }, deps);
+  let client = '';
+  for (const a of res.actions) {
+    if (a.client !== client) {
+      client = a.client;
+      out(`${client}:`);
+    }
+    out(`  ${SIGN[a.op]} ${a.kind.padEnd(5)} ${a.name}${a.op === 'unchanged' ? '' : `  ${a.op}`}${a.detail !== undefined ? ` — ${a.detail}` : ''}`);
+  }
+  const count = (op: Action['op']): number => res.actions.filter((a) => a.op === op).length;
+  const changes = count('add') + count('update') + count('remove');
+  const problems = count('conflict') + count('skip');
+  if (res.actions.length === 0) out('Nothing to sync: no installed AI tool, or the registry is empty.');
+  out('');
+  if (apply) {
+    out(`Done: ${changes} change(s), ${problems} skipped.`);
+    if (changes > 0) out('Restart the AI tools to load changed MCP servers.');
+  } else {
+    out(`Plan: ${changes} change(s), ${count('unchanged')} unchanged, ${problems} skipped. Nothing was written.`);
+    if (changes > 0) out('Run "magnus sync --apply" to write it.');
+  }
+  return problems > 0 ? 2 : 0;
+}
+
+function runImport(env: Env, args: string[], out: Out, deps: CliDeps): number {
+  const apply = args.includes('--apply');
+  const only = valuesOf(args, '--client');
+  const items = importFromTools(env, {
+    apply,
+    secrets: args.includes('--secrets'),
+    protector: deps.protector,
+    ...(only.length > 0 ? { only } : {}),
+  });
+  const sign = { import: '+', exists: '=', differs: '!', skip: '?' } as const;
+  let from = '';
+  for (const i of items) {
+    if (i.from !== from) {
+      from = i.from;
+      out(`${from}:`);
+    }
+    out(`  ${sign[i.op]} ${i.kind.padEnd(5)} ${i.name}${i.op === 'exists' ? '' : `  ${i.op}`}${i.detail !== undefined ? ` — ${i.detail}` : ''}`);
+  }
+  const n = items.filter((i) => i.op === 'import').length;
+  const left = items.filter((i) => i.op === 'differs' || i.op === 'skip').length;
+  if (items.length === 0) out('Nothing found in the installed AI tools.');
+  out('');
+  out(
+    apply
+      ? `Imported ${n} item(s) into the registry; ${left} left where they are.`
+      : `Would import ${n} item(s); ${left} left where they are. Nothing was written.`,
+  );
+  if (!apply && n > 0) out('Run "magnus import --apply" to take them over.');
+  if (apply && n > 0) out('Run "magnus sync" to see what the other tools get.');
+  if (apply && !args.includes('--secrets')) {
+    const plain = Object.entries(loadRegistry(env).mcpServers)
+      .filter(([, s]) => Object.keys(s.env).length > 0 && secretRefs(s).length === 0)
+      .map(([name]) => name);
+    if (plain.length > 0) {
+      out(`These servers have env values in plain text in magnus.json: ${plain.join(', ')}.`);
+      out('If one is a token: "magnus secret set NAME", then write ${secret:NAME} in its place.');
+    }
+  }
+  return 0;
+}
+
+async function secret(env: Env, args: string[], out: Out, deps: CliDeps): Promise<number> {
+  const [sub, name] = args;
+  if (sub === 'list') {
+    const names = secretNames(env);
+    out(names.length > 0 ? names.join('\n') : 'No secrets stored.');
+    return 0;
+  }
+  if (name === undefined || (sub !== 'set' && sub !== 'remove')) {
+    throw new MagnusError('BAD_ARGS', 'usage: magnus secret set <NAME> | list | remove <NAME>');
+  }
+  if (sub === 'remove') {
+    if (!removeSecret(env, name)) throw new MagnusError('NOT_FOUND', `no secret "${name}"`);
+    out(`Removed secret ${name}.`);
+    return 0;
+  }
+  setSecret(env, deps.protector(), name, await deps.readSecret());
+  out(`Stored secret ${name}. Use it as \${secret:${name}} in a server's env or args.`);
+  return 0;
+}
+
+function addMcp(env: Env, args: string[], out: Out): void {
+  const sep = args.indexOf('--');
+  const name = args[0];
+  if (name === undefined || sep < 1 || args[sep + 1] === undefined) {
+    throw new MagnusError('BAD_ARGS', 'usage: magnus add-mcp <name> [--client <id>]... -- <command> [args...]');
+  }
+  if (!validName(name)) throw new MagnusError('BAD_ARGS', `name "${name}": use letters, digits, _ and - (1-64)`);
+  if (name === HUB_NAME) throw new MagnusError('BAD_ARGS', `the name "${HUB_NAME}" is reserved for the hub`);
+  const reg = loadRegistry(env);
+  const clients = valuesOf(args.slice(1, sep), '--client');
+  const server: McpServer = { command: args[sep + 1] as string, args: args.slice(sep + 2), env: {} };
+  if (clients.length > 0) server.clients = clients;
+  const existed = Object.hasOwn(reg.mcpServers, name);
+  reg.mcpServers[name] = server;
+  saveRegistry(env, reg);
+  out(`${existed ? 'Updated' : 'Added'} MCP server "${name}". Run "magnus sync" to see what changes in your AI tools.`);
+}
+
+function removeMcp(env: Env, args: string[], out: Out): void {
+  const name = args[0];
+  if (name === undefined) throw new MagnusError('BAD_ARGS', 'usage: magnus remove-mcp <name>');
+  const reg = loadRegistry(env);
+  if (!Object.hasOwn(reg.mcpServers, name)) throw new MagnusError('NOT_FOUND', `no MCP server "${name}" in the registry`);
+  delete reg.mcpServers[name];
+  saveRegistry(env, reg);
+  out(`Removed "${name}" from the registry. Run "magnus sync --apply" to remove it from your AI tools.`);
+}
+
+function setMode(env: Env, args: string[], out: Out): void {
+  const [id, mode] = args;
+  if (id === undefined || (mode !== 'hub' && mode !== 'direct')) throw new MagnusError('BAD_ARGS', 'usage: magnus mode <tool> hub|direct');
+  setClientMode(env, id, mode);
+  out(`${id} is now in ${mode} mode. Run "magnus sync" to see what changes in it.`);
+}
+
+function key(env: Env, args: string[], out: Out): void {
+  if (args[0] === 'status') {
+    out(keyHash(env) === null ? 'No Magnus key yet. Run: magnus key new' : 'A Magnus key is set (it cannot be shown again; "magnus key new" replaces it).');
+  } else if (args[0] === 'new') {
+    const replaced = keyHash(env) !== null;
+    out(newKey(env));
+    out(`${replaced ? 'This replaces the old key. ' : ''}Shown once: keep it somewhere safe. Use it as "Authorization: Bearer <key>".`);
+  } else throw new MagnusError('BAD_ARGS', 'usage: magnus key new | status');
+}
+
+async function serve(env: Env, args: string[], out: Out, deps: CliDeps): Promise<number> {
+  const raw = valuesOf(args, '--port')[0];
+  const port = raw === undefined ? DEFAULT_PORT : Number(raw);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new MagnusError('BAD_ARGS', `bad port "${raw ?? ''}"`);
+  const hub = await startHubHttp(env, port, deps.protector);
+  out(`Magnus hub: ${hub.url} (this PC only; every request needs the Magnus key). Ctrl+C stops it.`);
+  await new Promise<void>((resolve) => process.once('SIGINT', () => resolve()));
+  await hub.close();
+  return 0;
+}
+
+async function runAsk(env: Env, args: string[], out: Out, deps: CliDeps): Promise<number> {
+  const flags = new Set(['--brain', '--servers']);
+  const words: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (flags.has(args[i] as string)) i++;
+    else words.push(args[i] as string);
+  }
+  const task = words.join(' ');
+  const cfg = brainConfig(env);
+  const brain = valuesOf(args, '--brain')[0];
+  if (brain !== undefined) {
+    if (brain !== 'codex' && brain !== 'antigravity') throw new MagnusError('BAD_ARGS', '--brain is codex or antigravity');
+    cfg.order = [brain];
+  }
+  const servers = valuesOf(args, '--servers')[0];
+  if (servers !== undefined) cfg.servers = servers.split(',').filter((s) => s !== '');
+  const reg = loadRegistry(env);
+  const unknown = cfg.servers.filter((s) => !Object.hasOwn(reg.mcpServers, s));
+  if (unknown.length > 0) throw new MagnusError('NOT_FOUND', `not in the registry: ${unknown.join(', ')}`, 'See: magnus status');
+  out(`Asking ${cfg.order.map((b) => BRAIN_NAMES[b]).join(', then ')} (servers: ${cfg.servers.join(', ')}; up to ${cfg.timeoutSec} s)...`);
+  const res = await ask(task, cfg, deps.brains(cfg.servers));
+  logAsk(env, task, res);
+  for (const a of res.attempts) {
+    const t = a.run ? ` in ${(a.run.ms / 1000).toFixed(1)} s${a.run.callsKnown ? `, ${a.run.toolCalls.length} tool call(s)` : ''}` : '';
+    out(`  ${BRAIN_NAMES[a.brain]}: ${a.outcome}${t}`);
+  }
+  if (res.stoppedBecause !== undefined) out(`  No other brain was tried: ${res.stoppedBecause}.`);
+  out('');
+  out(res.answer);
+  return res.ok ? 0 : 1;
+}
+
+/** Runs one command; returns the exit code (a promise for the commands that wait). */
+export function main(argv: string[], env: Env, out: Out, deps: CliDeps = realDeps(env, false)): number | Promise<number> {
+  const [cmd, ...args] = argv;
+  switch (cmd) {
+    case 'init':
+      out(initRegistry(env) ? `Created ${registryFile(env)}` : `Already there: ${registryFile(env)}`);
+      return 0;
+    case 'status':
+      status(env, out);
+      return 0;
+    case 'sync':
+      return runSync(env, args, out, deps.sync);
+    case 'import':
+      return runImport(env, args, out, deps);
+    case 'secret':
+      return secret(env, args, out, deps);
+    case 'run': {
+      if (args[0] === undefined) throw new MagnusError('BAD_ARGS', 'usage: magnus run <name>');
+      return runServer(env, args[0], { protector: deps.protector }).then((r) => r.code);
+    }
+    case 'mode':
+      setMode(env, args, out);
+      return 0;
+    case 'hub': {
+      const only = valuesOf(args, '--servers')[0]?.split(',').filter((s) => s !== '');
+      return runHubStdio(env, valuesOf(args, '--client')[0], deps.protector, undefined, only);
+    }
+    case 'ask':
+      return runAsk(env, args, out, deps);
+    case 'key':
+      key(env, args, out);
+      return 0;
+    case 'serve':
+      return serve(env, args, out, deps);
+    case 'add-mcp':
+      addMcp(env, args, out);
+      return 0;
+    case 'remove-mcp':
+      removeMcp(env, args, out);
+      return 0;
+    case undefined:
+    case 'help':
+    case '--help':
+    case '-h':
+      out(HELP);
+      return 0;
+    default:
+      throw new MagnusError('BAD_ARGS', `unknown command "${cmd}"`, 'Run: magnus help');
+  }
+}
+
+/** Reads a secret: everything piped in, or one line typed without echo. */
+function readSecretFromStdin(): Promise<string> {
+  const stdin = process.stdin;
+  return new Promise((resolve, reject) => {
+    let buf = '';
+    if (!stdin.isTTY) {
+      stdin.setEncoding('utf8');
+      stdin.on('data', (d: string) => (buf += d));
+      stdin.on('end', () => resolve(buf.replace(/\r?\n$/, '')));
+      stdin.on('error', reject);
+      return;
+    }
+    process.stderr.write('Value (hidden): ');
+    stdin.setRawMode(true);
+    stdin.setEncoding('utf8');
+    stdin.resume();
+    const onData = (d: string): void => {
+      for (const ch of d) {
+        if (ch === '\r' || ch === '\n') return done(() => resolve(buf));
+        if (ch === '\u0003') return done(() => reject(new MagnusError('CANCELLED', 'cancelled')));
+        if (ch === '\u0008' || ch === '\u007f') buf = buf.slice(0, -1);
+        else buf += ch;
+      }
+    };
+    const done = (fn: () => void): void => {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.off('data', onData);
+      process.stderr.write('\n');
+      fn();
+    };
+    stdin.on('data', onData);
+  });
+}
+
+/** `searchPath`: also look for `claude` on PATH (the real program only; tests never do). */
+export function realDeps(env: Env, searchPath: boolean): CliDeps {
+  const sync = defaultDeps(env, searchPath);
+  const hub = { command: sync.self.command, args: sync.self.args };
+  return { sync, protector: dpapiProtector, readSecret: readSecretFromStdin, brains: (servers) => realBrains(env, hub, servers) };
+}
+
+// Run only as a program, not when imported by tests.
+if (process.argv[1] !== undefined && /cli\.js$/.test(process.argv[1])) {
+  const fail = (e: unknown): void => {
+    if (!(e instanceof MagnusError)) throw e;
+    console.error(`magnus: ${e.message}${e.hint !== '' ? `\n${e.hint}` : ''}`);
+    process.exitCode = 1;
+  };
+  try {
+    const env = envFromProcess();
+    const code = main(process.argv.slice(2), env, (l) => console.log(l), realDeps(env, true));
+    if (typeof code === 'number') process.exitCode = code;
+    else code.then((c) => (process.exitCode = c), fail);
+  } catch (e) {
+    fail(e);
+  }
+}
