@@ -1,11 +1,25 @@
 #!/usr/bin/env node
 /** The `magnus` command: registry, sync, import, secrets, and the hub (stdio and HTTP). */
+import { fileURLToPath } from 'node:url';
+import {
+  autostartOff,
+  autostartOn,
+  autostartStatus,
+  fileLog,
+  regRunList,
+  relayLogFile,
+  relayStartCommand,
+  runningRelay,
+  takeRelayLock,
+  type AutostartState,
+  type RunList,
+} from './autostart.js';
 import { ask, brainConfig, logAsk, realBrains, type BrainSet } from './brain/ask.js';
 import { BRAIN_NAMES } from './brain/runners.js';
 import { CLIENTS } from './clients/defs.js';
 import { Bot } from './remote/bot.js';
 import { loadRelay, RelayPc, relayAppUrl, relayInvite, relaySetup, removeRelayDevice } from './remote/relay-pc.js';
-import { xtraosCaller } from './xtraos.js';
+import { findXtraosCore, xtraosCaller } from './xtraos.js';
 import { PHONE_SERVER, runPhoneMcp } from './remote/phone-mcp.js';
 import { loadRemote, startPairing, TOKEN_SECRET, unpair, PAIR_MINUTES } from './remote/state.js';
 import { Telegram } from './remote/telegram.js';
@@ -54,8 +68,9 @@ const HELP = `magnus — one hub for your MCP servers, skills and rules
   magnus remote pair | run | status | unpair
                                       control Magnus from your phone through your own Telegram bot
   magnus phone-mcp                    the phone tools as an MCP server (started by the hub)
-  magnus relay setup <address> [--new] | pair | run | devices | remove <id>
+  magnus relay setup <address> [--new] | pair | run [--log <file>] | devices | remove <id>
                                       your phone through your own encrypted relay (ADR 0010)
+  magnus autostart on | off | status  start the relay connection and XtraOS when you sign in
   magnus key new | status             the Magnus key for the HTTP hub (shown once, never stored in plain)
   magnus serve [--port N]             the hub over HTTP on 127.0.0.1 (needs the key on every request)
 `;
@@ -380,10 +395,17 @@ async function relayCmd(env: Env, args: string[], out: Out, deps: CliDeps): Prom
     return 0;
   }
   if (sub === 'run') {
+    // ADR 0011: one relay connection at a time (the sign-in start and a manual one must not race).
+    if (!takeRelayLock(env)) {
+      out(`The relay connection is already running (process ${runningRelay(env)}).`);
+      return 0;
+    }
+    const logFile = valuesOf(args, '--log')[0];
+    const say: Out = logFile !== undefined ? fileLog(logFile) : (l) => out(`${new Date().toISOString().slice(11, 19)} ${l}`);
     const cfg = brainConfig(env);
     const pc = new RelayPc(env, {
       protector: deps.protector,
-      log: (l) => out(`${new Date().toISOString().slice(11, 19)} ${l}`),
+      log: say,
       rpc: {
         xtraos: xtraosCaller(),
         ask: async (task) => {
@@ -394,12 +416,43 @@ async function relayCmd(env: Env, args: string[], out: Out, deps: CliDeps): Prom
       },
     });
     await pc.start();
-    out('Magnus is reachable from your paired phones. Ctrl+C stops it.');
-    await new Promise<void>((resolve) => process.once('SIGINT', () => resolve()));
+    say('Magnus is reachable from your paired phones. Ctrl+C stops it.');
+    await new Promise<void>((resolve) => {
+      process.once('SIGINT', () => resolve());
+      process.once('SIGTERM', () => resolve());
+    });
     pc.stop();
     return 0;
   }
-  throw new MagnusError('BAD_ARGS', 'usage: magnus relay setup <address> [--new] | pair | run | devices | remove <id>');
+  throw new MagnusError('BAD_ARGS', 'usage: magnus relay setup <address> [--new] | pair | run [--log <file>] | devices | remove <id>');
+}
+
+async function autostartCmd(env: Env, args: string[], out: Out, list: RunList = regRunList()): Promise<number> {
+  const sub = args[0] ?? 'status';
+  const show = (s: AutostartState): void => {
+    out(`Relay connection at sign-in: ${s.relay !== null ? 'on' : 'off'}`);
+    out(`XtraOS at sign-in:           ${s.xtraos !== null ? 'on' : 'off'}`);
+    const pid = runningRelay(env);
+    out(`Relay connection now:        ${pid !== null ? `running (process ${pid})` : 'not running'}`);
+  };
+  if (sub === 'status') {
+    show(autostartStatus(list));
+    return 0;
+  }
+  if (sub === 'on') {
+    if (!loadRelay(env)) throw new MagnusError('NO_RELAY', 'the relay is not set up', 'Run: magnus relay setup <relay address>');
+    const cli = fileURLToPath(new URL('./cli.js', import.meta.url));
+    const s = autostartOn(list, relayStartCommand(process.execPath, cli, relayLogFile(env)), findXtraosCore());
+    show(s);
+    out(`The relay connection logs to ${relayLogFile(env)}. Sign out and in (or restart) to check, or start it now with "magnus relay run".`);
+    return 0;
+  }
+  if (sub === 'off') {
+    show(autostartOff(list));
+    out('Nothing starts at sign-in any more. A relay connection running now keeps running until you close it or sign out.');
+    return 0;
+  }
+  throw new MagnusError('BAD_ARGS', 'usage: magnus autostart on | off | status');
 }
 
 /** Runs one command; returns the exit code (a promise for the commands that wait). */
@@ -435,6 +488,8 @@ export function main(argv: string[], env: Env, out: Out, deps: CliDeps = realDep
       return remote(env, args, out, deps);
     case 'relay':
       return relayCmd(env, args, out, deps);
+    case 'autostart':
+      return autostartCmd(env, args, out);
     case 'phone-mcp':
       return runPhoneMcp(env, deps.protector);
     case 'key':

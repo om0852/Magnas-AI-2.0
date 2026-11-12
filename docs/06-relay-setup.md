@@ -32,6 +32,7 @@ does not work for this. Railway works with the Dockerfile in `apps/relay`, withi
 ```
 magnus relay setup https://<ip-with-dashes>.sslip.io
 magnus relay run          # keep it running (it reconnects by itself)
+magnus autostart on       # start it (and XtraOS) at every sign-in, hidden; log: ~/.magnus/logs/relay.log
 ```
 
 ## 3. Pair your phone (once per phone)
