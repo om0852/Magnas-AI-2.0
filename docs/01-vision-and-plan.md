@@ -51,7 +51,8 @@ drive their own PC by voice or from their phone, safely.
 | 3.2 | The remote web app on the phone over Tailscale: device pairing, Approvals (XtraOS dialogs answered with a signed answer, XtraOS ADR 0076), Windows (read, tap, type), Ask — ADR 0009 | built, unit-tested; live on the owner's PC with the browser pane as the phone; not yet on a real phone (needs Tailscale) |
 | 3.3 | Phone access with no VPN: the owner's own WebSocket relay, end-to-end encrypted (ECDH P-256 + AES-GCM, keys set up through a QR code); phone app served by the relay; `magnus relay setup/pair/run` — ADR 0010, docs/06 | built, unit- and end-to-end tested; live on this PC with a local relay and the browser pane as the phone; relay not yet deployed (owner's Oracle VM) |
 | 3.4 | Start the relay connection and XtraOS at sign-in (`magnus autostart`) — ADR 0011 | built, unit-tested; on for the owner, checked by starting it as sign-in does |
-| 3.5 | Notifications for new approvals and for apps waiting on the user | next |
+| 3.5 | Live steps of a task and a Stop button (dashboard, `/m`, phone over the relay, CLI); voice typing on desktop and phone — ADR 0012 | built, tested; steps checked live with the real Codex CLI; voice not yet tried with a microphone |
+| 3.6 | Notifications for new approvals and for apps waiting on the user | next |
 
 ## Not goals
 - Magnus is not a new model and trains nothing.

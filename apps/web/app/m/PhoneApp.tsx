@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { canSign, keyCode, publicKeyB64, signAnswer } from '@/lib/device-key';
-import { AskPanel } from '../ui/AskPanel';
+import { AskPanel, MicButton } from '../ui/AskPanel';
 
 interface Dialog {
   uid: string;
@@ -226,8 +226,11 @@ function Windows() {
                   ))}
                 </select>
               )}
-              <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Text to type" maxLength={4000} />
-              <button className="primary" disabled={busy || text === ''}>Type and press Enter</button>
+              <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Text to type (or tap the mic and speak)" maxLength={4000} />
+              <div className="row">
+                <MicButton onText={(t) => setText((v) => (v.trim() === '' ? t : `${v.trimEnd()} ${t}`))} />
+                <button className="primary" disabled={busy || text === ''}>Type and press Enter</button>
+              </div>
             </form>
           </>
         )}

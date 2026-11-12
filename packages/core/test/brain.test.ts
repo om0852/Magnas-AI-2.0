@@ -43,7 +43,8 @@ test('codex args: only the hub, limited servers, its tools pre-approved, read-on
   ]);
   assert.deepEqual(a.slice(-3), ['-o', 'C:\\t\\answer.txt', 'the prompt']);
   assert.ok(!a.some((x) => /bypass|danger/i.test(x)), 'never the bypass flags');
-  assert.deepEqual(agyArgs('p', 120_000), ['-p', 'p', '--sandbox', '--print-timeout', '115s']);
+  assert.deepEqual(agyArgs('p', 120_000), ['-p', 'p', '--sandbox', '--output-format', 'stream-json', '--print-timeout', '115s']);
+  assert.ok(a.includes('--json'), 'Codex streams its steps (ADR 0012)');
   assert.deepEqual(codexToolCalls('x\nmcp: magnus/xtraos__status started\nmcp: magnus/xtraos__status (completed)\nmcp: magnus/xtraos__click started\n'), ['xtraos__status', 'xtraos__click']);
 });
 

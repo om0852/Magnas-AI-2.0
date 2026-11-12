@@ -147,6 +147,8 @@ export class RelayPc {
   private readonly sessions = new Map<string, Session>();
   private key: CryptoKey | null = null;
   private retry = 1000;
+  /** The task running now (one at a time), so a phone can stop it (ADR 0012). */
+  private task: AbortController | null = null;
 
   constructor(
     private readonly env: Env,
@@ -257,6 +259,22 @@ export class RelayPc {
       try {
         if (typeof body.method !== 'string') throw new MagnusError('BAD_ARGS', 'no method');
         const params = (typeof body.params === 'object' && body.params !== null ? body.params : {}) as Record<string, unknown>;
+        if (body.method === 'ask.stop') {
+          const running = this.task !== null;
+          this.task?.abort();
+          return await reply({ result: { stopped: running } });
+        }
+        let run = {};
+        if (body.method === 'ask') {
+          if (this.task !== null) throw new MagnusError('BUSY', 'another task is still running; stop it or wait');
+          const ctl = new AbortController();
+          this.task = ctl;
+          run = {
+            signal: ctl.signal,
+            // Each step goes to the phone as it happens, encrypted like everything else.
+            onProgress: (progress: unknown) => void channel.seal({ id: body.id, progress }).then((s) => this.send(cid, { t: 'msg', ...s })),
+          };
+        }
         const result = await rpc(body.method, params, device, {
           ...this.deps.rpc,
           setApprover: (id, approverId) => {
@@ -267,6 +285,8 @@ export class RelayPc {
               saveRelay(this.env, c);
             }
           },
+        }, run).finally(() => {
+          if (body.method === 'ask') this.task = null;
         });
         await reply({ result });
       } catch (e) {

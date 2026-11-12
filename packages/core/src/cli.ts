@@ -294,7 +294,14 @@ async function runAsk(env: Env, args: string[], out: Out, deps: CliDeps): Promis
   const unknown = cfg.servers.filter((s) => s !== PHONE_SERVER && !Object.hasOwn(reg.mcpServers, s));
   if (unknown.length > 0) throw new MagnusError('NOT_FOUND', `not in the registry: ${unknown.join(', ')}`, 'See: magnus status');
   out(`Asking ${cfg.order.map((b) => BRAIN_NAMES[b]).join(', then ')} (servers: ${cfg.servers.join(', ')}; up to ${cfg.timeoutSec} s)...`);
-  const res = await ask(task, cfg, deps.brains(cfg.servers));
+  const ctl = new AbortController();
+  const onInt = (): void => ctl.abort();
+  process.once('SIGINT', onInt);
+  const icon: Record<string, string> = { thinking: '…', tool: '→', 'tool-done': '✓', 'tool-failed': '✗', say: '»', note: '·' };
+  const res = await ask(task, cfg, deps.brains(cfg.servers), {
+    signal: ctl.signal,
+    onProgress: (p) => out(`  ${(p.ms / 1000).toFixed(0).padStart(3)}s ${icon[p.kind] ?? '·'} ${p.text}`),
+  }).finally(() => process.off('SIGINT', onInt));
   logAsk(env, task, res);
   for (const a of res.attempts) {
     const t = a.run ? ` in ${(a.run.ms / 1000).toFixed(1)} s${a.run.callsKnown ? `, ${a.run.toolCalls.length} tool call(s)` : ''}` : '';
@@ -408,8 +415,8 @@ async function relayCmd(env: Env, args: string[], out: Out, deps: CliDeps): Prom
       log: say,
       rpc: {
         xtraos: xtraosCaller(),
-        ask: async (task) => {
-          const res = await ask(task, cfg, deps.brains(cfg.servers));
+        ask: async (task, opts) => {
+          const res = await ask(task, cfg, deps.brains(cfg.servers), opts);
           logAsk(env, task, res);
           return { ok: res.ok, answer: res.answer, brain: res.brain };
         },

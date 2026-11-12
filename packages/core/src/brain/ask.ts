@@ -4,7 +4,7 @@ import path from 'node:path';
 import { loadRegistry } from '../registry.js';
 import { MagnusError, type Env } from '../types.js';
 import { brainPrompt, type BrainId } from './prompt.js';
-import { agyRunner, codexRunner, findAgy, findCodex, type BrainRun, type BrainRunner, type Launcher } from './runners.js';
+import { agyRunner, codexRunner, findAgy, findCodex, type BrainRun, type BrainRunner, type Launcher, type RunOptions } from './runners.js';
 
 export interface BrainConfig {
   order: BrainId[];
@@ -45,7 +45,7 @@ export function brainConfig(env: Env): BrainConfig {
  * to the next. A brain that called tools and failed (or whose calls cannot be seen) stops the
  * run: trying again could do an action twice.
  */
-export async function ask(task: string, cfg: BrainConfig, brains: BrainSet): Promise<AskResult> {
+export async function ask(task: string, cfg: BrainConfig, brains: BrainSet, opts: RunOptions = {}): Promise<AskResult> {
   if (task.trim() === '') throw new MagnusError('BAD_ARGS', 'the task is empty');
   const attempts: Attempt[] = [];
   for (const id of cfg.order) {
@@ -55,9 +55,11 @@ export async function ask(task: string, cfg: BrainConfig, brains: BrainSet): Pro
       continue;
     }
     const view = id === 'codex' ? 'hub' : 'own';
-    const run = await runner(brainPrompt(task, cfg.servers, view), cfg.timeoutSec * 1000);
+    const run = await runner(brainPrompt(task, cfg.servers, view), cfg.timeoutSec * 1000, opts);
     attempts.push({ brain: id, outcome: run.ok ? 'ok' : 'failed', run });
     if (run.ok) return { ok: true, brain: id, answer: run.answer, attempts };
+    // Stop means stop: never hand the task to another brain.
+    if (run.stopped === true || opts.signal?.aborted === true) return { ok: false, brain: id, answer: 'Stopped by you.', attempts, stoppedBecause: 'you pressed Stop' };
     if (!run.callsKnown || run.toolCalls.length > 0) {
       return {
         ok: false,

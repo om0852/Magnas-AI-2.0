@@ -1,4 +1,5 @@
 /** What a paired phone may ask the PC to do (ADR 0009/0010). Shared by the relay connector. */
+import type { RunOptions } from '../brain/runners.js';
 import { MagnusError } from '../types.js';
 import type { XtraosCall } from '../xtraos.js';
 import { controlsFrom } from './controls.js';
@@ -11,8 +12,8 @@ export interface RpcDevice {
 
 export interface RpcDeps {
   xtraos: XtraosCall;
-  /** Runs a task through the brain; the answer text. */
-  ask: (task: string) => Promise<{ ok: boolean; answer: string; brain: string | null }>;
+  /** Runs a task through the brain; the answer text. Progress and Stop: ADR 0012. */
+  ask: (task: string, opts?: RunOptions) => Promise<{ ok: boolean; answer: string; brain: string | null }>;
   /** Remembers the device's XtraOS approver id. */
   setApprover: (deviceId: string, approverId: string) => void;
 }
@@ -20,7 +21,7 @@ export interface RpcDeps {
 const isRef = (v: unknown, k: 'w' | 'e'): v is string => typeof v === 'string' && new RegExp(`^${k}\\d+$`).test(v);
 
 /** Runs one call from a phone. Throws MagnusError for things the phone should show. */
-export async function rpc(method: string, p: Record<string, unknown>, device: RpcDevice, deps: RpcDeps): Promise<unknown> {
+export async function rpc(method: string, p: Record<string, unknown>, device: RpcDevice, deps: RpcDeps, run: RunOptions = {}): Promise<unknown> {
   const x = deps.xtraos;
   switch (method) {
     case 'ping':
@@ -72,7 +73,7 @@ export async function rpc(method: string, p: Record<string, unknown>, device: Rp
     case 'ask': {
       const task = p['task'];
       if (typeof task !== 'string' || task.trim() === '' || task.length > 4000) throw new MagnusError('BAD_ARGS', 'task is 1-4000 characters');
-      return deps.ask(task);
+      return deps.ask(task, run);
     }
     default:
       throw new MagnusError('BAD_ARGS', `unknown call "${method}"`);

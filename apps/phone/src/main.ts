@@ -111,6 +111,87 @@ function pairView(invite: PairInvite): void {
   app.replaceChildren(header(), h('section', { class: 'card' }, h('h2', {}, 'Pair this phone'), h('p', { class: 'muted' }, 'Your PC made this link. After pairing, everything between this phone and your PC is encrypted; the relay cannot read it.'), form, out));
 }
 
+
+// ---- voice typing (ADR 0012) ----------------------------------------------------------------
+// The browser's own speech recognition (Chrome, Edge, Safari). In Chrome, Google's speech
+// service turns the audio into text.
+
+interface Rec {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start(): void;
+  stop(): void;
+  onresult: ((e: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
+  onend: (() => void) | null;
+}
+const Recognizer = (): (new () => Rec) | null => {
+  const w = window as unknown as { SpeechRecognition?: new () => Rec; webkitSpeechRecognition?: new () => Rec };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+};
+const VOICE_WHY: Record<string, string> = {
+  'not-allowed': 'Microphone blocked: allow it for this site in the browser settings.',
+  'service-not-allowed': 'Microphone blocked: allow it for this site in the browser settings.',
+  'no-speech': 'Nothing heard. Tap the mic and speak again.',
+  'audio-capture': 'No microphone found.',
+  network: 'Voice typing needs an internet connection.',
+};
+
+/** A mic button that types what you say into `field` (null when the browser cannot). */
+function micFor(field: HTMLTextAreaElement): HTMLElement | null {
+  const R = Recognizer();
+  if (!R) return null;
+  let rec: Rec | null = null;
+  const live = h('span', { class: 'small muted live' });
+  const btn = h('button', { type: 'button', class: 'mic', 'aria-label': 'Speak instead of typing', title: 'Speak' }, '🎤');
+  const stopUi = (): void => {
+    rec = null;
+    btn.className = 'mic';
+    btn.textContent = '🎤';
+    btn.setAttribute('aria-label', 'Speak instead of typing');
+    live.textContent = '';
+  };
+  btn.addEventListener('click', () => {
+    if (rec) {
+      rec.stop();
+      return;
+    }
+    const r = new R();
+    r.lang = navigator.language || 'en-US';
+    r.continuous = true;
+    r.interimResults = true;
+    r.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (!res) continue;
+        if (res.isFinal) {
+          const t = res[0].transcript.trim();
+          field.value = field.value.trim() === '' ? t : `${field.value.trimEnd()} ${t}`;
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+        } else interim += res[0].transcript;
+      }
+      live.textContent = interim || 'Listening…';
+    };
+    let problem = '';
+    r.onerror = (e) => {
+      problem = VOICE_WHY[e.error] ?? `Voice stopped: ${e.error}`;
+    };
+    r.onend = () => {
+      stopUi();
+      live.textContent = problem; // empty unless something went wrong
+    };
+    rec = r;
+    r.start();
+    btn.className = 'mic on';
+    btn.textContent = '■';
+    btn.setAttribute('aria-label', 'Stop listening');
+    live.textContent = 'Listening…';
+  });
+  return h('span', { class: 'mic-wrap' }, btn, live);
+}
+
 // ---- the app ------------------------------------------------------------------------------
 
 interface Dialog {
@@ -172,9 +253,9 @@ async function main(id: PhoneIdentity): Promise<void> {
       retry = Math.min(retry * 2, 30_000);
     }
   };
-  const call = <T>(method: string, params: Record<string, unknown> = {}, ms?: number): Promise<T> => {
+  const call = <T>(method: string, params: Record<string, unknown> = {}, ms?: number, onProgress?: (p: unknown) => void): Promise<T> => {
     if (!session) return Promise.reject(new Error('not connected to your PC yet'));
-    return session.call<T>(method, params, ms);
+    return session.call<T>(method, params, ms, onProgress);
   };
 
   // Approvals ------------------------------------------------------------------------------
@@ -276,8 +357,8 @@ async function main(id: PhoneIdentity): Promise<void> {
         const target = h('select', { 'aria-label': 'Type into' }, h('option', { value: '' }, 'The focused field'), ...v.type.map((c) => h('option', { value: c.ref }, `${c.role}: ${c.name || '(no name)'}`)));
         const firstField = v.type.find((c) => !c.off);
         if (firstField) target.value = firstField.ref;
-        const text = h('textarea', { rows: 2, maxLength: 4000, placeholder: 'Text to type' });
-        const form = h('form', { class: 'stack', onsubmit: (e: Event) => { e.preventDefault(); if (text.value) void act({ op: 'type', text: text.value, submit: true, ...(target.value ? { ref: target.value } : {}) }, 'Typed and pressed Enter'); } }, v.type.length > 0 ? target : null, text, h('button', { class: 'primary' }, 'Type and press Enter'));
+        const text = h('textarea', { rows: 2, maxLength: 4000, placeholder: 'Text to type (or tap the mic and speak)' });
+        const form = h('form', { class: 'stack', onsubmit: (e: Event) => { e.preventDefault(); if (text.value) void act({ op: 'type', text: text.value, submit: true, ...(target.value ? { ref: target.value } : {}) }, 'Typed and pressed Enter'); } }, v.type.length > 0 ? target : null, text, h('div', { class: 'row' }, micFor(text), h('button', { class: 'primary' }, 'Type and press Enter')));
         card.replaceChildren(...only(
           h('div', { class: 'row spread' }, h('button', { class: 'secondary', onclick: () => void showList() }, '← Windows'), h('button', { class: 'secondary', onclick: () => void showWindow(ref, title) }, 'Refresh')),
           h('h2', { class: 'win-title' }, title),
@@ -298,30 +379,55 @@ async function main(id: PhoneIdentity): Promise<void> {
   };
 
   // Ask ------------------------------------------------------------------------------------
+  const ICON: Record<string, string> = { thinking: '💭', tool: '🔧', 'tool-done': '✓', 'tool-failed': '✗', say: '💬', note: '·' };
   const askView = (): void => {
-    const text = h('textarea', { rows: 3, maxLength: 4000, placeholder: 'e.g. Is Claude waiting for me? What does it ask?' });
-    const btn = h('button', { class: 'primary' }, 'Run');
+    const text = h('textarea', { rows: 3, maxLength: 4000, placeholder: 'e.g. Is Claude waiting for me? What does it ask? (or tap the mic and speak)' });
+    const btn = h('button', { class: 'primary', type: 'submit' }, 'Run');
+    const stop = h('button', { class: 'danger hidden', type: 'button' }, 'Stop');
+    const steps = h('ol', { class: 'steps hidden', 'aria-live': 'polite' });
     const out = h('div');
+    stop.addEventListener('click', () => {
+      stop.disabled = true;
+      stop.textContent = 'Stopping…';
+      void call('ask.stop').catch(() => undefined);
+    });
     const form = h('form', {
       class: 'stack',
       onsubmit: async (e: Event) => {
         e.preventDefault();
         if (!text.value.trim()) return;
-        btn.disabled = true;
-        btn.textContent = 'Working… (15-70 s)';
+        btn.classList.add('hidden');
+        stop.classList.remove('hidden');
+        stop.disabled = false;
+        stop.textContent = 'Stop';
+        steps.replaceChildren(h('li', { class: 'step k-note' }, h('span', { class: 'step-t' }), h('span', { class: 'step-i' }, '⋯'), h('span', { class: 'step-x muted' }, 'Starting the AI on your PC (5-15 s)…')));
+        steps.classList.remove('hidden');
         out.replaceChildren();
+        let first = true;
         try {
-          const r = await call<{ ok: boolean; answer: string; brain: string | null }>('ask', { task: text.value }, 330_000);
+          const r = await call<{ ok: boolean; answer: string; brain: string | null }>('ask', { task: text.value }, 330_000, (p) => {
+            const s = p as { kind: string; text: string; ms: number };
+            if (first) {
+              steps.replaceChildren();
+              first = false;
+            }
+            steps.append(h('li', { class: `step k-${s.kind}` }, h('span', { class: 'step-t' }, `${Math.round(s.ms / 1000)}s`), h('span', { class: 'step-i', 'aria-hidden': 'true' }, ICON[s.kind] ?? '·'), h('span', { class: 'step-x' }, s.text)));
+            steps.lastElementChild?.scrollIntoView({ block: 'nearest' });
+          });
+          // The last "says" step is usually the answer itself: show it once.
+          const last = steps.lastElementChild;
+          const said = last?.classList.contains('k-say') === true ? (last.querySelector('.step-x')?.textContent ?? '').replace(/…$/, '') : null;
+          if (said !== null && r.answer.replace(/\s+/g, ' ').trim().startsWith(said)) last?.remove();
           out.replaceChildren(h('div', { class: r.ok ? 'answer' : 'answer failed' }, h('pre', { class: 'answer-text' }, r.answer)));
         } catch (err) {
           out.replaceChildren(notice(false, errText(err)));
         } finally {
-          btn.disabled = false;
-          btn.textContent = 'Run';
+          btn.classList.remove('hidden');
+          stop.classList.add('hidden');
         }
       },
-    }, text, btn);
-    body.replaceChildren(h('section', { class: 'card' }, h('h2', {}, 'Ask Magnus'), h('p', { class: 'muted' }, 'A task in plain words, done on your PC. Risky steps still need your approval (Approvals tab).'), form, out));
+    }, text, h('div', { class: 'row' }, micFor(text), btn, stop));
+    body.replaceChildren(h('section', { class: 'card' }, h('h2', {}, 'Ask Magnus'), h('p', { class: 'muted' }, 'A task in plain words, done on your PC. You see each step and can stop it. Risky steps still need your approval (Approvals tab).'), form, steps, out));
   };
 
   const views = { Approvals: approvals, Windows: windows, Ask: askView } as const;

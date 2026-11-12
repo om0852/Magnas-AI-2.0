@@ -99,7 +99,7 @@ export class PhoneSession {
   private channel: Channel | null = null;
   private line: Line | null = null;
   private nextId = 1;
-  private readonly pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private readonly pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; progress?: (p: unknown) => void }>();
   /** Called when the PC goes offline or online, or the connection drops. */
   onStatus: (s: 'online' | 'offline' | 'closed') => void = () => {};
 
@@ -137,7 +137,7 @@ export class PhoneSession {
 
   private async receive(m: Sealed): Promise<void> {
     if (!this.channel) return;
-    let body: { id?: number; result?: unknown; error?: string; hint?: string };
+    let body: { id?: number; result?: unknown; error?: string; hint?: string; progress?: unknown };
     try {
       body = (await this.channel.open(m)) as typeof body;
     } catch {
@@ -145,13 +145,17 @@ export class PhoneSession {
     }
     const p = typeof body.id === 'number' ? this.pending.get(body.id) : undefined;
     if (!p) return;
+    if (body.progress !== undefined) {
+      p.progress?.(body.progress);
+      return;
+    }
     this.pending.delete(body.id as number);
     if (body.error !== undefined) p.reject(new Error([body.error, body.hint].filter(Boolean).join('. ')));
     else p.resolve(body.result);
   }
 
   /** One call to the PC (encrypted both ways). */
-  async call<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs = 60_000): Promise<T> {
+  async call<T = unknown>(method: string, params: Record<string, unknown> = {}, timeoutMs = 60_000, onProgress?: (p: unknown) => void): Promise<T> {
     if (!this.channel || !this.line) throw new Error('not connected');
     const id = this.nextId++;
     const result = new Promise<T>((resolve, reject) => {
@@ -162,7 +166,7 @@ export class PhoneSession {
         clearTimeout(timer);
         fn(a);
       };
-      this.pending.set(id, { resolve: done(resolve as (v: unknown) => void), reject: done(reject) });
+      this.pending.set(id, { resolve: done(resolve as (v: unknown) => void), reject: done(reject), ...(onProgress ? { progress: onProgress } : {}) });
     });
     const sealed = await this.channel.seal({ id, method, params });
     this.line.send({ t: 'msg', ...sealed });

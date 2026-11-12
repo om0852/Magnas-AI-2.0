@@ -51,7 +51,14 @@ test('end to end: pair with a QR invite, then encrypted calls through a real rel
         if (method === 'approvers.add') return { id: 'appr9' };
         throw new MagnusError('NOPE', `unexpected ${method}`);
       },
-      ask: async (task) => ({ ok: true, answer: `did: ${task}`, brain: 'codex' }),
+      ask: async (task, opts) => {
+        if (task === 'slow') {
+          opts?.onProgress?.({ kind: 'tool', text: 'xtraos__list_windows', ms: 1 });
+          return new Promise((resolve) => opts?.signal?.addEventListener('abort', () => resolve({ ok: false, answer: 'Stopped by you.', brain: 'codex' })));
+        }
+        opts?.onProgress?.({ kind: 'say', text: 'working on it', ms: 2 });
+        return { ok: true, answer: `did: ${task}`, brain: 'codex' };
+      },
     },
   });
   try {
@@ -80,6 +87,18 @@ test('end to end: pair with a QR invite, then encrypted calls through a real rel
     const [a, b] = await Promise.all([s.call('ask', { task: 'open YouTube' }), s.call('ping')]);
     assert.deepEqual([a, b], [{ ok: true, answer: 'did: open YouTube', brain: 'codex' }, { pong: true, device: 'Om phone' }]);
     await assert.rejects(s.call('format_disk'), /unknown call/);
+    // Live steps arrive before the answer, encrypted; Stop ends a running task (ADR 0012).
+    const seen: unknown[] = [];
+    assert.deepEqual(await s.call('ask', { task: 'quick' }, 5000, (p) => seen.push(p)), { ok: true, answer: 'did: quick', brain: 'codex' });
+    assert.deepEqual(seen, [{ kind: 'say', text: 'working on it', ms: 2 }]);
+    const slowSteps: unknown[] = [];
+    const slow = s.call('ask', { task: 'slow' }, 5000, (p) => slowSteps.push(p));
+    await new Promise((r) => setTimeout(r, 200));
+    await assert.rejects(s.call('ask', { task: 'second' }), /another task is still running/);
+    assert.deepEqual(await s.call('ask.stop'), { stopped: true });
+    assert.deepEqual(await slow, { ok: false, answer: 'Stopped by you.', brain: 'codex' });
+    assert.equal(slowSteps.length, 1);
+    assert.deepEqual(await s.call('ask.stop'), { stopped: false }, 'nothing left to stop');
     s.close();
 
     // A phone that never paired, or was removed, gets nothing.

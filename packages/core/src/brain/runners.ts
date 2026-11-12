@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { resolveCommand } from '../run.js';
 import type { Env } from '../types.js';
+import { parseAgyLine, parseCodexLine, type Progress } from './progress.js';
 import type { BrainId } from './prompt.js';
 
 /** How to start a brain: a program and its leading arguments. */
@@ -22,11 +23,19 @@ export interface BrainRun {
   /** True when the CLI reports tool calls; false means toolCalls is unknown, not empty. */
   callsKnown: boolean;
   timedOut: boolean;
+  /** The user pressed Stop (ADR 0012). */
+  stopped?: boolean;
   ms: number;
 }
 
+/** Live progress and the Stop button (ADR 0012). */
+export interface RunOptions {
+  onProgress?: (p: Progress) => void;
+  signal?: AbortSignal;
+}
+
 /** Runs one brain on a prompt. Injected so tests need no real CLI. */
-export type BrainRunner = (prompt: string, timeoutMs: number) => Promise<BrainRun>;
+export type BrainRunner = (prompt: string, timeoutMs: number, opts?: RunOptions) => Promise<BrainRun>;
 
 /**
  * The Codex launcher: `codex.js` started with Node (the npm `codex` is a .cmd shim, which would
@@ -58,6 +67,7 @@ export function codexArgs(prompt: string, hub: Launcher, servers: readonly strin
     '--skip-git-repo-check',
     '-s',
     'read-only',
+    '--json',
     '-c',
     `mcp_servers.magnus.command=${toml(hub.command)}`,
     '-c',
@@ -76,7 +86,7 @@ export function codexArgs(prompt: string, hub: Launcher, servers: readonly strin
 
 /** `agy -p` (pure). */
 export function agyArgs(prompt: string, timeoutMs: number): string[] {
-  return ['-p', prompt, '--sandbox', '--print-timeout', `${Math.max(10, Math.floor(timeoutMs / 1000) - 5)}s`];
+  return ['-p', prompt, '--sandbox', '--output-format', 'stream-json', '--print-timeout', `${Math.max(10, Math.floor(timeoutMs / 1000) - 5)}s`];
 }
 
 /** The MCP calls Codex printed on stderr ("mcp: magnus/<tool> started"). Pure. */
@@ -89,26 +99,50 @@ interface Spawned {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  stopped: boolean;
   ms: number;
 }
 
-/** Runs a program with no input in an empty folder, stopping it after `timeoutMs`. */
-function runIn(cwd: string, l: Launcher, args: string[], timeoutMs: number): Promise<Spawned> {
+/**
+ * Runs a program with no input in an empty folder, stopping it after `timeoutMs` or when
+ * `signal` aborts. `onLine` gets each stdout line as it arrives.
+ */
+function runIn(cwd: string, l: Launcher, args: string[], timeoutMs: number, onLine?: (line: string) => void, signal?: AbortSignal): Promise<Spawned> {
   const t0 = Date.now();
   return new Promise((resolve) => {
     const child = spawn(/* turbopackIgnore: true */ l.command, [...l.args, ...args], { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let stdout = '';
     let stderr = '';
+    let pending = '';
     let timedOut = false;
-    child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')));
+    let stopped = false;
+    child.stdout.on('data', (d: Buffer) => {
+      const s = d.toString('utf8');
+      stdout += s;
+      pending += s;
+      let i: number;
+      while ((i = pending.indexOf('\n')) >= 0) {
+        const line = pending.slice(0, i).trim();
+        pending = pending.slice(i + 1);
+        if (line !== '') onLine?.(line);
+      }
+    });
     child.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')));
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill();
     }, timeoutMs);
+    const stop = (): void => {
+      stopped = true;
+      child.kill();
+    };
+    if (signal?.aborted === true) stop();
+    signal?.addEventListener('abort', stop, { once: true });
     const done = (code: number | null): void => {
       clearTimeout(timer);
-      resolve({ code, stdout, stderr, timedOut, ms: Date.now() - t0 });
+      signal?.removeEventListener('abort', stop);
+      if (pending.trim() !== '') onLine?.(pending.trim());
+      resolve({ code, stdout, stderr, timedOut, stopped, ms: Date.now() - t0 });
     };
     child.on('error', (e) => {
       stderr += e.message;
@@ -124,19 +158,37 @@ function workDir(): string {
 
 /** The Codex brain with the hub limited to `servers`. */
 export function codexRunner(codex: Launcher, hub: Launcher, servers: readonly string[], env: Env): BrainRunner {
-  return async (prompt, timeoutMs) => {
+  return async (prompt, timeoutMs, opts = {}) => {
     const cwd = workDir();
     const last = path.join(cwd, 'answer.txt');
-    const r = await runIn(cwd, codex, codexArgs(prompt, hub, servers, env.magnusHome, last), timeoutMs);
-    const answer = fs.existsSync(last) ? fs.readFileSync(last, 'utf8').trim() : '';
+    const t0 = Date.now();
+    const calls: string[] = [];
+    let said = '';
+    const r = await runIn(
+      cwd,
+      codex,
+      codexArgs(prompt, hub, servers, env.magnusHome, last),
+      timeoutMs,
+      (line) => {
+        const p = parseCodexLine(line);
+        if (p.toolCall !== undefined) calls.push(p.toolCall);
+        if (p.answer !== undefined) said = p.answer;
+        if (p.step) opts.onProgress?.({ ...p.step, ms: Date.now() - t0 });
+      },
+      opts.signal,
+    );
+    const file = fs.existsSync(last) ? fs.readFileSync(last, 'utf8').trim() : '';
+    const answer = file !== '' ? file : said.trim();
     fs.rmSync(cwd, { recursive: true, force: true });
     const tail = r.stderr.trim().split('\n').slice(-3).join(' ').slice(0, 300);
+    const toolCalls = calls.length > 0 ? calls : codexToolCalls(r.stderr);
     return {
-      ok: r.code === 0 && !r.timedOut && answer !== '',
-      answer: answer !== '' ? answer : r.timedOut ? 'stopped: time limit reached' : tail,
-      toolCalls: codexToolCalls(r.stderr),
+      ok: r.code === 0 && !r.timedOut && !r.stopped && answer !== '',
+      answer: r.stopped ? 'Stopped by you.' : answer !== '' ? answer : r.timedOut ? 'stopped: time limit reached' : tail,
+      toolCalls,
       callsKnown: true,
       timedOut: r.timedOut,
+      stopped: r.stopped,
       ms: r.ms,
     };
   };
@@ -144,17 +196,41 @@ export function codexRunner(codex: Launcher, hub: Launcher, servers: readonly st
 
 /** The Antigravity brain (its own MCP servers; the prompt names the allowed ones). */
 export function agyRunner(agy: Launcher): BrainRunner {
-  return async (prompt, timeoutMs) => {
+  return async (prompt, timeoutMs, opts = {}) => {
     const cwd = workDir();
-    const r = await runIn(cwd, agy, agyArgs(prompt, timeoutMs), timeoutMs);
+    const t0 = Date.now();
+    const calls: string[] = [];
+    let answer = '';
+    let text = '';
+    let parsedAny = false;
+    const r = await runIn(
+      cwd,
+      agy,
+      agyArgs(prompt, timeoutMs),
+      timeoutMs,
+      (line) => {
+        const p = parseAgyLine(line);
+        if (p.step || p.toolCall !== undefined || p.answer !== undefined || p.textDelta !== undefined) parsedAny = true;
+        if (p.toolCall !== undefined) calls.push(p.toolCall);
+        if (p.step) opts.onProgress?.({ ...p.step, ms: Date.now() - t0 });
+        if (p.textDelta !== undefined) text += p.textDelta;
+        if (p.responseDone === true && text.trim() !== '') {
+          opts.onProgress?.({ kind: 'say', text: text.trim().slice(0, 400), ms: Date.now() - t0 });
+          text = '';
+        }
+        if (p.answer !== undefined) answer = p.answer;
+      },
+      opts.signal,
+    );
     fs.rmSync(cwd, { recursive: true, force: true });
-    const answer = r.stdout.trim();
     return {
-      ok: r.code === 0 && !r.timedOut && answer !== '',
-      answer: answer !== '' ? answer : r.timedOut ? 'stopped: time limit reached' : r.stderr.trim().slice(0, 300),
-      toolCalls: [],
-      callsKnown: false,
+      ok: r.code === 0 && !r.timedOut && !r.stopped && answer !== '',
+      answer: r.stopped ? 'Stopped by you.' : answer !== '' ? answer : r.timedOut ? 'stopped: time limit reached' : r.stderr.trim().slice(0, 300),
+      toolCalls: calls,
+      // Its JSON stream names every tool call (ADR 0012); without a stream nothing is known.
+      callsKnown: parsedAny,
       timedOut: r.timedOut,
+      stopped: r.stopped,
       ms: r.ms,
     };
   };
