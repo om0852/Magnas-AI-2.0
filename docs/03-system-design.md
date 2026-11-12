@@ -187,7 +187,11 @@ Set up: docs/06. Then `magnus relay run` on the PC and the phone app at the rela
 - **Live (owner's PC, 2026-11-12):** relay on localhost:8080, `magnus relay run` connected, the
   dashboard's QR code rendered; the browser pane opened the link as the phone, paired (the secret
   left the address bar), connected; Approvals and Windows (Notepad's text and 28 buttons) came
-  through the encrypted session. Not yet on a deployed relay or a real phone.
+  through the encrypted session.
+- **Deployed (2026-11-12):** the owner's Oracle Cloud Always Free VM (Oracle Linux 9.8, x86_64,
+  1 GB): relay and Caddy as services, Let's Encrypt certificate, http redirects to https, the
+  WebSocket answers, security headers present; the owner's PC connected to it. Not yet paired
+  with a real phone.
 
 ## The remote app over Tailscale (ADR 0009)
 **Set up once (about 10 minutes):**

@@ -8,21 +8,25 @@ and your phone (ADR 0010). It cannot read them. You run it on your own free serv
 **Recommended: Oracle Cloud Always Free VM (Ubuntu).** Vercel cannot hold WebSockets open, so it
 does not work for this. Railway works with the Dockerfile in `apps/relay`, within its plan.
 
-1. In Oracle Cloud, create an Always Free VM with Ubuntu 22.04 or 24.04 and note its public IP.
+1. In Oracle Cloud, create an Always Free VM (Oracle Linux 9 or Ubuntu) and note its public IP.
+   The SSH user is `opc` on Oracle Linux and `ubuntu` on Ubuntu.
 2. In Oracle Cloud → your VCN → Security List → add Ingress rules for TCP ports **80** and **443**
    from `0.0.0.0/0`.
 3. On your PC, build the phone app into the relay folder, then copy the folder to the VM:
    ```
    npm run build -w @magnus/phone
-   scp -r apps/relay ubuntu@<VM-IP>:~/magnus-relay
+   scp -r apps/relay opc@<VM-IP>:~/magnus-relay
    ```
 4. On the VM:
    ```
    cd ~/magnus-relay && sudo bash deploy/setup-oracle.sh
    ```
-   It installs Node.js and Caddy, runs the relay as a service, and gets a free https certificate
+   It installs Node.js (the official build, checksum verified; not through dnf, which runs a
+   1 GB VM out of memory) and Caddy, runs the relay as a service, and gets a free https certificate
    for `<ip-with-dashes>.sslip.io` (no domain needed; `DOMAIN=you.example` to use your own).
-5. Check from anywhere: `https://<ip-with-dashes>.sslip.io/healthz` shows `ok`.
+5. On the 1 GB AMD VM this takes about 10 minutes and SSH may not answer meanwhile; that is the
+   VM's small CPU share, not a failure.
+6. Check from anywhere: `https://<ip-with-dashes>.sslip.io/healthz` shows `ok`.
 
 ## 2. Connect your PC (once)
 ```
