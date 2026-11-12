@@ -28,6 +28,16 @@ hold in every phase; a change to them needs an ADR.
 - A task has limits: steps, time, and no approval it can give itself.
 
 ## Phase 3 (remote)
+Built first (slice 3.1, ADR 0008) as a Telegram bot run by the PC:
+- The PC polls Telegram; no port is opened, nothing is reachable from outside.
+- Pairing with a one-time 6-digit code (10 minutes, 5 tries) sent from a private chat; one owner;
+  `magnus remote unpair` forgets it. Everyone else is ignored without an answer.
+- The bot token is a DPAPI secret. Telegram carries the messages and files (their terms apply).
+- The phone tools can only send to the owner's chat, so a tricked task can at most send the
+  owner their own file.
+- Approvals stay on the PC screen until slice 3.2.
+
+The rules below are for the later web app and relay (slice 3.3):
 - **Pairing.** A phone is paired on the PC, in person (a code shown on the PC screen). The
   phone keeps a private key; the PC keeps the public key. Pairings can be listed and revoked.
 - **Signed commands.** Every command and every approval is signed by the phone and carries a

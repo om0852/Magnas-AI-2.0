@@ -3,8 +3,8 @@
 One hub for your MCP servers, skills and rules across every AI tool, with a brain and a phone
 remote on top.
 
-**Status: phases 1 and 2 built** (registry, sync, import, secrets, the hub, the dashboard and
-the brain: `magnus ask`).
+**Status: phases 1 and 2 built, phase 3 started** (registry, sync, import, secrets, the hub, the
+dashboard, the brain `magnus ask`, and the phone remote through your own Telegram bot).
 Unit-tested; sync applied on the owner's PC to Claude Code, Codex and VS Code; the hub ran live
 with four real servers; the dashboard was checked in a browser. See docs/03 for what is verified. The brain, phone remote and voice are planned, not built. See
 [the plan](docs/01-vision-and-plan.md).
@@ -23,6 +23,8 @@ magnus secret set API_KEY                    # then use ${secret:API_KEY} in a s
 magnus mode codex hub                        # Codex gets ONE entry: the Magnus hub
 magnus key new && magnus serve               # the hub over HTTP on this PC, with the Magnus key
 magnus ask "Open YouTube in Firefox"         # Codex CLI does it with XtraOS (Antigravity CLI as fallback)
+magnus secret set TELEGRAM_BOT_TOKEN         # a bot from @BotFather, then:
+magnus remote run                            # and in another terminal: magnus remote pair
 ```
 `sync` puts the same MCP servers, skills and rules into each installed tool, never overwrites
 anything you wrote yourself, and reports conflicts instead.

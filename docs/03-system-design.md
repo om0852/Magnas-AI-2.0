@@ -11,6 +11,8 @@ Override the location with `MAGNUS_HOME`.
   state.json           what Magnus wrote where (do not edit)
   secrets.json         secrets, each encrypted for your Windows account (never plain text)
   hub.json             the hash of the Magnus key (the key itself is never stored)
+  remote.json          the paired phone's Telegram ids, and a pairing code while one is valid
+  brain-log.jsonl      every brain run: task, brain, answer, tool calls
 ```
 
 `magnus.json`:
@@ -173,6 +175,21 @@ to Codex CLI; if Codex is not installed or fails before calling any tool, to Ant
   65 s. Measured while deciding: with all 103 hub tools Codex listed none, so the brain gets a
   chosen set of servers. Dashboard "Ask Magnus": "how many windows are open, which is in
   front" answered by Codex in 49 s (2 tool calls); a request from another web page got 403.
+
+## The phone remote (ADR 0008)
+1. In Telegram, ask @BotFather for a new bot (free); it gives a token.
+2. `magnus secret set TELEGRAM_BOT_TOKEN` (stored encrypted).
+3. `magnus remote run` (keeps running), then in another terminal `magnus remote pair`; send the
+   printed `/pair 123456` to the bot from your phone.
+4. Send any task to the bot: "find my resume and send it to me".
+
+- The PC polls Telegram; nothing on the PC is reachable from the internet.
+- Only the paired Telegram user, in their private chat, is obeyed; others get no answer.
+  Messages sent while Magnus was not running are skipped.
+- A phone task runs `magnus ask` with the brain's servers plus `phone`: `phone__send_file`
+  and `phone__send_message` reach only the owner's chat (no recipient argument; max 50 MB).
+- XtraOS approvals still appear on the PC screen only (slice 3.2 moves them to the phone).
+- Files in `~/.magnus`: `remote.json` (owner's Telegram ids, pairing code while valid).
 
 ## Secrets
 Write `${secret:NAME}` in a server's `env` value or `args`. The value lives only in

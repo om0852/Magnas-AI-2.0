@@ -7,6 +7,8 @@ import { MagnusError, type Env, type McpServer, type Registry } from './types.js
 const NAME = /^[A-Za-z0-9_-]{1,64}$/;
 /** The name of the hub entry in the tools (ADR 0005); not allowed for a registered server. */
 export const HUB_NAME = 'magnus';
+/** Built-in server names (ADR 0005, 0008); not allowed for a registered server. */
+export const RESERVED_NAMES: readonly string[] = [HUB_NAME, 'phone'];
 
 /** The real user's environment; `MAGNUS_HOME` moves the registry. */
 export function envFromProcess(vars: NodeJS.ProcessEnv = process.env): Env {
@@ -57,7 +59,7 @@ export function parseRegistry(text: string): Registry {
     if (!validName(name)) {
       throw new MagnusError('BAD_REGISTRY', `server name "${name}": use letters, digits, _ and - (1-64)`);
     }
-    if (name === HUB_NAME) throw new MagnusError('BAD_REGISTRY', `the server name "${HUB_NAME}" is reserved for the hub`);
+    if (RESERVED_NAMES.includes(name)) throw new MagnusError('BAD_REGISTRY', `the server name "${name}" is reserved for Magnus`);
     if (!isRecord(v) || typeof v['command'] !== 'string' || v['command'] === '') {
       throw new MagnusError('BAD_REGISTRY', `server "${name}" needs a "command"`);
     }

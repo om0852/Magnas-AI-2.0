@@ -3,13 +3,17 @@
 import { ask, brainConfig, logAsk, realBrains, type BrainSet } from './brain/ask.js';
 import { BRAIN_NAMES } from './brain/runners.js';
 import { CLIENTS } from './clients/defs.js';
+import { Bot } from './remote/bot.js';
+import { PHONE_SERVER, runPhoneMcp } from './remote/phone-mcp.js';
+import { loadRemote, startPairing, TOKEN_SECRET, unpair, PAIR_MINUTES } from './remote/state.js';
+import { Telegram } from './remote/telegram.js';
 import { setClientMode } from './dashboard.js';
 import { DEFAULT_PORT } from './hub/http.js';
 import { keyHash, newKey } from './hub/key.js';
 import { runHubStdio, startHubHttp } from './hub/start.js';
 import { importFromTools } from './import.js';
 import {
-  HUB_NAME,
+  RESERVED_NAMES,
   envFromProcess,
   initRegistry,
   listSkills,
@@ -20,7 +24,7 @@ import {
   validName,
 } from './registry.js';
 import { runServer } from './run.js';
-import { dpapiProtector, removeSecret, secretNames, secretRefs, setSecret, type Protector } from './secrets.js';
+import { dpapiProtector, readSecrets, removeSecret, secretNames, secretRefs, setSecret, type Protector } from './secrets.js';
 import { clientStatuses, defaultDeps, sync, type SyncDeps } from './sync.js';
 import { MagnusError, type Action, type Env, type McpServer } from './types.js';
 
@@ -45,6 +49,9 @@ const HELP = `magnus — one hub for your MCP servers, skills and rules
                                       the hub on stdin/stdout (what a hub-mode tool starts)
   magnus ask "<task>" [--brain codex|antigravity] [--servers a,b]
                                       do a task with an installed AI CLI and the brain's servers
+  magnus remote pair | run | status | unpair
+                                      control Magnus from your phone through your own Telegram bot
+  magnus phone-mcp                    the phone tools as an MCP server (started by the hub)
   magnus key new | status             the Magnus key for the HTTP hub (shown once, never stored in plain)
   magnus serve [--port N]             the hub over HTTP on 127.0.0.1 (needs the key on every request)
 `;
@@ -199,7 +206,7 @@ function addMcp(env: Env, args: string[], out: Out): void {
     throw new MagnusError('BAD_ARGS', 'usage: magnus add-mcp <name> [--client <id>]... -- <command> [args...]');
   }
   if (!validName(name)) throw new MagnusError('BAD_ARGS', `name "${name}": use letters, digits, _ and - (1-64)`);
-  if (name === HUB_NAME) throw new MagnusError('BAD_ARGS', `the name "${HUB_NAME}" is reserved for the hub`);
+  if (RESERVED_NAMES.includes(name)) throw new MagnusError('BAD_ARGS', `the name "${name}" is reserved for Magnus`);
   const reg = loadRegistry(env);
   const clients = valuesOf(args.slice(1, sep), '--client');
   const server: McpServer = { command: args[sep + 1] as string, args: args.slice(sep + 2), env: {} };
@@ -265,7 +272,7 @@ async function runAsk(env: Env, args: string[], out: Out, deps: CliDeps): Promis
   const servers = valuesOf(args, '--servers')[0];
   if (servers !== undefined) cfg.servers = servers.split(',').filter((s) => s !== '');
   const reg = loadRegistry(env);
-  const unknown = cfg.servers.filter((s) => !Object.hasOwn(reg.mcpServers, s));
+  const unknown = cfg.servers.filter((s) => s !== PHONE_SERVER && !Object.hasOwn(reg.mcpServers, s));
   if (unknown.length > 0) throw new MagnusError('NOT_FOUND', `not in the registry: ${unknown.join(', ')}`, 'See: magnus status');
   out(`Asking ${cfg.order.map((b) => BRAIN_NAMES[b]).join(', then ')} (servers: ${cfg.servers.join(', ')}; up to ${cfg.timeoutSec} s)...`);
   const res = await ask(task, cfg, deps.brains(cfg.servers));
@@ -278,6 +285,63 @@ async function runAsk(env: Env, args: string[], out: Out, deps: CliDeps): Promis
   out('');
   out(res.answer);
   return res.ok ? 0 : 1;
+}
+
+/** The bot token from the secret store, checked against Telegram. */
+async function bot(env: Env, deps: CliDeps): Promise<{ telegram: Telegram; username: string }> {
+  if (!secretNames(env).includes(TOKEN_SECRET)) {
+    throw new MagnusError('NO_SECRET', 'no Telegram bot token yet', `Make a bot with @BotFather in Telegram, then run: magnus secret set ${TOKEN_SECRET}`);
+  }
+  const token = readSecrets(env, deps.protector(), [TOKEN_SECRET]).get(TOKEN_SECRET) ?? '';
+  const telegram = new Telegram(token);
+  const me = await telegram.getMe();
+  return { telegram, username: me.username ?? me.first_name ?? 'your bot' };
+}
+
+async function remote(env: Env, args: string[], out: Out, deps: CliDeps): Promise<number> {
+  const sub = args[0];
+  if (sub === 'status') {
+    const s = loadRemote(env);
+    out(s.owner ? `Paired with Telegram user ${s.owner.name ?? s.owner.userId} since ${s.owner.pairedAt.slice(0, 10)}.` : 'No phone is paired. Run: magnus remote pair');
+    out(secretNames(env).includes(TOKEN_SECRET) ? 'Bot token: stored (encrypted).' : `Bot token: not set (magnus secret set ${TOKEN_SECRET}).`);
+    return 0;
+  }
+  if (sub === 'unpair') {
+    out(unpair(env) ? 'Unpaired. The bot now ignores everyone until you pair again.' : 'No phone was paired.');
+    return 0;
+  }
+  if (sub === 'pair') {
+    const { username } = await bot(env, deps);
+    const code = startPairing(env);
+    out(`In Telegram, open @${username} and send:  /pair ${code}`);
+    out(`The code works for ${PAIR_MINUTES} minutes, while "magnus remote run" is running.`);
+    if (loadRemote(env).owner) out('This replaces the phone paired now once the new one pairs.');
+    return 0;
+  }
+  if (sub === 'run') {
+    const { telegram, username } = await bot(env, deps);
+    const cfg = brainConfig(env);
+    const servers = [...cfg.servers.filter((s) => s !== PHONE_SERVER), PHONE_SERVER];
+    const b = new Bot(env, {
+      telegram,
+      runTask: (task) => ask(task, { ...cfg, servers }, deps.brains(servers)).then((res) => {
+        logAsk(env, task, res);
+        return res;
+      }),
+      log: (l) => out(`${new Date().toISOString().slice(11, 19)} ${l}`),
+      startedAt: Math.floor(Date.now() / 1000),
+    });
+    let stopping = false;
+    process.once('SIGINT', () => {
+      stopping = true;
+      out('Stopping after the current wait...');
+    });
+    const owner = loadRemote(env).owner;
+    out(`Magnus remote is running as @${username}. ${owner ? `Paired with ${owner.name ?? owner.userId}.` : 'No phone paired yet: run "magnus remote pair" in another terminal.'} Ctrl+C stops it.`);
+    await b.run(() => stopping);
+    return 0;
+  }
+  throw new MagnusError('BAD_ARGS', 'usage: magnus remote pair | run | status | unpair');
 }
 
 /** Runs one command; returns the exit code (a promise for the commands that wait). */
@@ -309,6 +373,10 @@ export function main(argv: string[], env: Env, out: Out, deps: CliDeps = realDep
     }
     case 'ask':
       return runAsk(env, args, out, deps);
+    case 'remote':
+      return remote(env, args, out, deps);
+    case 'phone-mcp':
+      return runPhoneMcp(env, deps.protector);
     case 'key':
       key(env, args, out);
       return 0;

@@ -3,6 +3,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { AddressInfo } from 'node:net';
+import { fileURLToPath } from 'node:url';
+import { PHONE_SERVER } from '../remote/phone-mcp.js';
 import { loadRegistry } from '../registry.js';
 import { readSecrets, resolveServer, secretRefs, type Protector } from '../secrets.js';
 import { MagnusError, type Env, type McpServer } from '../types.js';
@@ -11,6 +13,11 @@ import { serveHttp, HTTP_PATH } from './http.js';
 import { keyHash } from './key.js';
 
 export const VERSION = '0.1.0';
+
+/** This install's cli.js (the hub runs as `node cli.js hub`). */
+function selfCli(): string {
+  return fileURLToPath(new URL('../cli.js', import.meta.url));
+}
 
 /**
  * The registry's servers for one tool (`clientId` undefined = all), with secrets filled in.
@@ -24,7 +31,7 @@ export function hubServers(
 ): Record<string, McpServer> {
   const reg = loadRegistry(env);
   if (only !== undefined) {
-    const unknown = only.filter((n) => !Object.hasOwn(reg.mcpServers, n));
+    const unknown = only.filter((n) => n !== PHONE_SERVER && !Object.hasOwn(reg.mcpServers, n));
     if (unknown.length > 0) throw new MagnusError('NOT_FOUND', `not in the registry: ${unknown.join(', ')}`);
   }
   const mine = Object.entries(reg.mcpServers).filter(
@@ -32,7 +39,10 @@ export function hubServers(
   );
   const refs = [...new Set(mine.flatMap(([, s]) => secretRefs(s)))];
   const values = refs.length > 0 ? readSecrets(env, protector(), refs) : new Map<string, string>();
-  return Object.fromEntries(mine.map(([name, s]) => [name, resolveServer(s, values)]));
+  const out: Record<string, McpServer> = Object.fromEntries(mine.map(([name, s]) => [name, resolveServer(s, values)]));
+  // ADR 0008: the built-in phone server, only when named (the brain on a phone task).
+  if (only?.includes(PHONE_SERVER) === true) out[PHONE_SERVER] = { command: process.execPath, args: [selfCli(), 'phone-mcp'], env: {} };
+  return out;
 }
 
 /** Starts a registered server as a child process and connects to it. */

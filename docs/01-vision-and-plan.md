@@ -44,6 +44,13 @@ drive their own PC by voice or from their phone, safely.
 | 1.3 | Gateway: `magnus hub` (stdio) and `magnus serve` (HTTP, Magnus key); `magnus mode <tool> hub` gives a tool one entry — ADR 0005 | built, unit-tested; live on the owner's PC: 103 tools from 4 real servers through the hub; no tool switched to hub mode yet |
 | 1.4 | Dashboard (Next.js 16): registry, tools, servers, skills, rules, the sync plan; apply; direct/hub switch — ADR 0006 | built; guard and state unit-tested; checked in a browser on the owner's PC (dark and light, desktop and phone width) |
 
+### Phase 3 in slices
+| Slice | Content | Status |
+|---|---|---|
+| 3.1 | Phone remote through the owner's own Telegram bot: the PC polls Telegram (nothing exposed), pairing with a one-time code, owner only, one task at a time; phone tools for the brain (`send_file`, `send_message`, owner's chat only) — ADR 0008 | built, unit-tested; hub and phone server checked as real processes; live run needs the owner's bot token |
+| 3.2 | Approvals on the phone: XtraOS asks the paired phone, not only the PC screen | next; needs an XtraOS change and its own ADR there |
+| 3.3 | The web app on the phone through a relay | later, only if Telegram is not enough |
+
 ## Not goals
 - Magnus is not a new model and trains nothing.
 - Magnus does not replace XtraOS's safety layer and does not bypass any tool's own permissions.
