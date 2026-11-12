@@ -27,4 +27,6 @@ export {
   type Device,
 } from './remote/devices.js';
 export { findXtraosCore, xtraosCaller, type XtraosCall } from './xtraos.js';
+export { loadRelay, relayAppUrl, relayInvite, removeRelayDevice, type RelayConfig, type RelayDevice } from './remote/relay-pc.js';
 export { controlsFrom, type Control } from './remote/controls.js';
+export { dpapiProtector } from './secrets.js';

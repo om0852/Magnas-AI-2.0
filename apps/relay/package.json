@@ -1,0 +1,14 @@
+{
+  "name": "@magnus/relay",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Magnus relay: passes encrypted messages between your PC and your phone, and serves the phone app.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "ws": "8.22.2"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "Magnus",
+  "short_name": "Magnus",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#101014",
+  "theme_color": "#5b3fd6"
+}

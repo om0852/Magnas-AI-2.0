@@ -23,7 +23,8 @@ magnus secret set API_KEY                    # then use ${secret:API_KEY} in a s
 magnus mode codex hub                        # Codex gets ONE entry: the Magnus hub
 magnus key new && magnus serve               # the hub over HTTP on this PC, with the Magnus key
 magnus ask "Open YouTube in Firefox"         # Codex CLI does it with XtraOS (Antigravity CLI as fallback)
-# Phone, from anywhere: Tailscale + the remote app (docs/03, "The remote app")
+# Phone, from anywhere, no VPN: your own encrypted relay (docs/06), then:
+magnus relay setup https://<your-relay> && magnus relay run
 ```
 `sync` puts the same MCP servers, skills and rules into each installed tool, never overwrites
 anything you wrote yourself, and reports conflicts instead.
@@ -45,5 +46,6 @@ npm test
 - [03 System design](docs/03-system-design.md)
 - [04 Coding standards](docs/04-coding-standards.md)
 - [05 Security model](docs/05-security.md)
+- [06 Your own relay](docs/06-relay-setup.md)
 - [Decisions (ADRs)](docs/adr)
 - [Rules for AI agents](AGENTS.md)

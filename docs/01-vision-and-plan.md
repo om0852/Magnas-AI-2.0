@@ -49,7 +49,8 @@ drive their own PC by voice or from their phone, safely.
 |---|---|---|
 | 3.1 | (Kept, off unless a bot token is set; the owner's Telegram cannot make bots.) Phone remote through the owner's own Telegram bot: the PC polls Telegram (nothing exposed), pairing with a one-time code, owner only, one task at a time; phone tools for the brain (`send_file`, `send_message`, owner's chat only) — ADR 0008 | built, unit-tested; hub and phone server checked as real processes; live run needs the owner's bot token |
 | 3.2 | The remote web app on the phone over Tailscale: device pairing, Approvals (XtraOS dialogs answered with a signed answer, XtraOS ADR 0076), Windows (read, tap, type), Ask — ADR 0009 | built, unit-tested; live on the owner's PC with the browser pane as the phone; not yet on a real phone (needs Tailscale) |
-| 3.3 | Push notifications for new approvals; installable app | next |
+| 3.3 | Phone access with no VPN: the owner's own WebSocket relay, end-to-end encrypted (ECDH P-256 + AES-GCM, keys set up through a QR code); phone app served by the relay; `magnus relay setup/pair/run` — ADR 0010, docs/06 | built, unit- and end-to-end tested; live on this PC with a local relay and the browser pane as the phone; relay not yet deployed (owner's Oracle VM) |
+| 3.4 | Notifications for new approvals and for apps waiting on the user; start Magnus at login | next |
 
 ## Not goals
 - Magnus is not a new model and trains nothing.

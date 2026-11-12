@@ -143,3 +143,6 @@ tr:last-child td { border-bottom: 0; }
 .chip-btn { background: var(--accent-soft); color: var(--accent); border: 0; border-radius: 8px; padding: 8px 12px; font-weight: 600; }
 .chip-btn:disabled { opacity: 0.5; }
 .device-row { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
+.qr-box { display: grid; gap: 8px; justify-items: start; margin-top: 12px; }
+.qr { width: min(280px, 100%); background: #fff; padding: 8px; border-radius: 10px; }
+.qr svg { display: block; width: 100%; height: auto; }

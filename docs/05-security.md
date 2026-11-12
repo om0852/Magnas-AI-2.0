@@ -46,6 +46,14 @@ Built next (slice 3.2, ADR 0009) as a web app reached over Tailscale:
   only after a real click on its PC dialog and checks every signature (XtraOS ADR 0076). Magnus
   cannot answer a dialog by itself.
 
+Then (slice 3.3, ADR 0010) without a VPN, through the owner's own relay:
+- End-to-end encryption between phone and PC; the relay forwards ciphertext and stores only a
+  hash of the room secret. Keys are exchanged through the QR code shown on the PC screen.
+- Tested: tampering, a wrong key, replays, recorded old sessions, a guessed pairing secret, an
+  expired or reused QR code, an unpaired or removed phone, and a relay pretending to be the PC
+  are all refused.
+- Accepted risk: the phone app's code is served by the relay (the owner's own VM).
+
 General rules for any remote access:
 - **Pairing.** A phone is paired on the PC, in person (a code shown on the PC screen). The
   phone keeps a private key; the PC keeps the public key. Pairings can be listed and revoked.

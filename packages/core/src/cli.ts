@@ -4,6 +4,8 @@ import { ask, brainConfig, logAsk, realBrains, type BrainSet } from './brain/ask
 import { BRAIN_NAMES } from './brain/runners.js';
 import { CLIENTS } from './clients/defs.js';
 import { Bot } from './remote/bot.js';
+import { loadRelay, RelayPc, relayAppUrl, relayInvite, relaySetup, removeRelayDevice } from './remote/relay-pc.js';
+import { xtraosCaller } from './xtraos.js';
 import { PHONE_SERVER, runPhoneMcp } from './remote/phone-mcp.js';
 import { loadRemote, startPairing, TOKEN_SECRET, unpair, PAIR_MINUTES } from './remote/state.js';
 import { Telegram } from './remote/telegram.js';
@@ -52,6 +54,8 @@ const HELP = `magnus — one hub for your MCP servers, skills and rules
   magnus remote pair | run | status | unpair
                                       control Magnus from your phone through your own Telegram bot
   magnus phone-mcp                    the phone tools as an MCP server (started by the hub)
+  magnus relay setup <address> [--new] | pair | run | devices | remove <id>
+                                      your phone through your own encrypted relay (ADR 0010)
   magnus key new | status             the Magnus key for the HTTP hub (shown once, never stored in plain)
   magnus serve [--port N]             the hub over HTTP on 127.0.0.1 (needs the key on every request)
 `;
@@ -344,6 +348,60 @@ async function remote(env: Env, args: string[], out: Out, deps: CliDeps): Promis
   throw new MagnusError('BAD_ARGS', 'usage: magnus remote pair | run | status | unpair');
 }
 
+async function relayCmd(env: Env, args: string[], out: Out, deps: CliDeps): Promise<number> {
+  const sub = args[0];
+  if (sub === 'setup') {
+    const addr = args[1];
+    if (addr === undefined || addr.startsWith('--')) throw new MagnusError('BAD_ARGS', 'usage: magnus relay setup <relay address> [--new]');
+    const c = await relaySetup(env, deps.protector, addr, args.includes('--new'));
+    out(`Relay set: ${relayAppUrl(c.url)} (room ${c.room.slice(0, 6)}…).`);
+    out('Next: "magnus relay run" (keep it running), then "magnus relay pair" and scan the code on your phone.');
+    return 0;
+  }
+  if (sub === 'pair') {
+    const { link, expiresAt } = relayInvite(env, deps.protector);
+    out('Open this on your phone (or scan the QR code on the PC dashboard). It works once, for 10 minutes:');
+    out(link);
+    out(`(valid until ${new Date(expiresAt).toLocaleTimeString()}; "magnus relay run" must be running)`);
+    return 0;
+  }
+  if (sub === 'devices') {
+    const c = loadRelay(env);
+    if (!c) throw new MagnusError('NO_RELAY', 'the relay is not set up', 'Run: magnus relay setup <relay address>');
+    out(`Relay: ${relayAppUrl(c.url)}`);
+    out(c.devices.length === 0 ? 'No phone paired.' : c.devices.map((d) => `  ${d.id}  ${d.name}  paired ${d.created.slice(0, 10)}${d.approverId ? '  answers approvals' : ''}`).join('\n'));
+    return 0;
+  }
+  if (sub === 'remove') {
+    const d = args[1] === undefined ? null : removeRelayDevice(env, args[1]);
+    if (!d) throw new MagnusError('NOT_FOUND', 'no such device', 'See: magnus relay devices');
+    if (d.approverId !== undefined) await xtraosCaller()('approvers.remove', { id: d.approverId }).catch(() => out('Could not remove it from XtraOS approvers; do it there.'));
+    out(`Removed ${d.name}.`);
+    return 0;
+  }
+  if (sub === 'run') {
+    const cfg = brainConfig(env);
+    const pc = new RelayPc(env, {
+      protector: deps.protector,
+      log: (l) => out(`${new Date().toISOString().slice(11, 19)} ${l}`),
+      rpc: {
+        xtraos: xtraosCaller(),
+        ask: async (task) => {
+          const res = await ask(task, cfg, deps.brains(cfg.servers));
+          logAsk(env, task, res);
+          return { ok: res.ok, answer: res.answer, brain: res.brain };
+        },
+      },
+    });
+    await pc.start();
+    out('Magnus is reachable from your paired phones. Ctrl+C stops it.');
+    await new Promise<void>((resolve) => process.once('SIGINT', () => resolve()));
+    pc.stop();
+    return 0;
+  }
+  throw new MagnusError('BAD_ARGS', 'usage: magnus relay setup <address> [--new] | pair | run | devices | remove <id>');
+}
+
 /** Runs one command; returns the exit code (a promise for the commands that wait). */
 export function main(argv: string[], env: Env, out: Out, deps: CliDeps = realDeps(env, false)): number | Promise<number> {
   const [cmd, ...args] = argv;
@@ -375,6 +433,8 @@ export function main(argv: string[], env: Env, out: Out, deps: CliDeps = realDep
       return runAsk(env, args, out, deps);
     case 'remote':
       return remote(env, args, out, deps);
+    case 'relay':
+      return relayCmd(env, args, out, deps);
     case 'phone-mcp':
       return runPhoneMcp(env, deps.protector);
     case 'key':

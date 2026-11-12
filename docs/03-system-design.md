@@ -176,7 +176,20 @@ to Codex CLI; if Codex is not installed or fails before calling any tool, to Ant
   chosen set of servers. Dashboard "Ask Magnus": "how many windows are open, which is in
   front" answered by Codex in 49 s (2 tool calls); a request from another web page got 403.
 
-## The remote app (ADR 0009)
+## The phone over your relay (ADR 0010)
+Set up: docs/06. Then `magnus relay run` on the PC and the phone app at the relay's address.
+
+- Phone and PC agree a key per session (ECDH P-256, HKDF with both sides' nonces); every message
+  is AES-256-GCM with a growing sequence number. The relay forwards ciphertext only.
+- Pairing goes through the QR code (one-time secret in the part of the link after `#`, which is
+  never sent to a server); both sides prove they know it with an HMAC, then the keys are pinned.
+- The relay keeps only a hash of the room secret; the first PC to register owns the room.
+- **Live (owner's PC, 2026-11-12):** relay on localhost:8080, `magnus relay run` connected, the
+  dashboard's QR code rendered; the browser pane opened the link as the phone, paired (the secret
+  left the address bar), connected; Approvals and Windows (Notepad's text and 28 buttons) came
+  through the encrypted session. Not yet on a deployed relay or a real phone.
+
+## The remote app over Tailscale (ADR 0009)
 **Set up once (about 10 minutes):**
 1. Install Tailscale on the PC and on the phone (tailscale.com, free personal plan) and sign in
    with the same account on both.

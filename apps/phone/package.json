@@ -1,0 +1,15 @@
+{
+  "name": "@magnus/phone",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The Magnus phone app served by the relay (ADR 0010): pairing, approvals, windows, ask — end-to-end encrypted.",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --format=esm --target=es2022 --minify --sourcemap --outfile=../relay/public/app.js && node copy-static.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  }
+}

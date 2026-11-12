@@ -9,3 +9,5 @@ dist/
 
 next-env.d.ts
 *.tsbuildinfo
+apps/relay/public/*.map
+apps/relay/data/
