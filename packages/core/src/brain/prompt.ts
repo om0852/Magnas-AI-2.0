@@ -33,6 +33,8 @@ export function brainPrompt(task: string, servers: readonly string[], view: Tool
     '- For repetitive work (many files, icons, rows), keep going until every item is done; do many steps per call with xtraos__batch where it fits.',
     '- When a step does not work, try another way (a keyboard shortcut, a menu, another tool or a skill) before giving up. Small surprises, such as icons snapping to a grid, are not a reason to stop.',
     '- Check the result at the end (observe again) and fix what is off.',
+    '- When observe shows few or no elements for a window (custom-drawn apps, games, canvas, video), look at it with xtraos__screenshot or read it with xtraos__ocr instead of giving up.',
+    '- Antivirus / virus scans: use magnus__defender (status, update, quick_scan). Never try the Windows Security app: it is blocked for you on purpose.',
     '- Arranging desktop icons (left, right, both sides): call magnus__arrange_desktop_icons once; it moves every icon itself. For other desktop work: magnus__show_desktop first (Win+D does not work for you), then magnus__restore_windows when done.',
     '- Stop early only for the rules above, or when the task needs something only the user can do. If the request is unclear, ask with magnus__ask_user when it is available instead of guessing; otherwise say what you need.',
     '- Magnus tracks this task itself: do not call magnus__task_start, magnus__task_update or magnus__task_done.',

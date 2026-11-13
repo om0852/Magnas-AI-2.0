@@ -3,6 +3,7 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult, type Tool } from '@modelcontextprotocol/sdk/types.js';
 import { ARRANGE_ICONS, arrangeIcons, type Layout } from './arrange.js';
+import { defender, DEFENDER, DEFENDER_TOOL } from './defender.js';
 import { DESKTOP_TOOLS, DesktopHelper, RESTORE_WINDOWS, SHOW_DESKTOP } from './desktop.js';
 import type { BuiltinTools } from '../tasks/mcp-tools.js';
 import type { McpServer } from '../types.js';
@@ -114,6 +115,7 @@ export class Gateway {
       },
       ...(this.builtins?.tools ?? []),
       ...(this.up.get('xtraos')?.client ? DESKTOP_TOOLS : []),
+      ...(process.platform === 'win32' && this.names.includes('xtraos') ? [DEFENDER_TOOL] : []),
     ];
     for (const name of this.names) {
       for (const t of this.up.get(name)?.tools ?? []) tools.push({ ...t, name: `${name}${SEP}${t.name}` });
@@ -133,6 +135,7 @@ export class Gateway {
   async callTool(name: string, args: Record<string, unknown> | undefined): Promise<CallToolResult> {
     if (name === STATUS_TOOL) return textResult(this.status());
     if (this.builtins?.tools.some((t) => t.name === name)) return this.builtins.call(name, args ?? {});
+    if (name === DEFENDER && process.platform === 'win32' && this.names.includes('xtraos')) return defender(args?.['op']);
     if (name === SHOW_DESKTOP) return this.desktop.show();
     if (name === RESTORE_WINDOWS) return this.desktop.restore();
     if (name === ARRANGE_ICONS) {

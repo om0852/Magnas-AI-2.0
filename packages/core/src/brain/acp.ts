@@ -115,6 +115,8 @@ export function acpRunner(agy: Launcher, hub: Launcher, servers: readonly string
               say({ kind: 'thinking', text: thought.replace(/\s+/g, ' ').trim().slice(0, 300) });
               thought = '';
             }
+          } else if (kind === 'tool_call' && u['kind'] === 'read' && /^File\b/.test(String(u['title'] ?? ''))) {
+            // Antigravity reading its own tool descriptions: housekeeping, not a step for the user.
           } else if (kind === 'tool_call') {
             const name = acpToolName(u);
             calls.push(name);

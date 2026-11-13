@@ -141,3 +141,16 @@ test('arrange: icons already in a left or right column are never moved; only the
   assert.equal(toLeft, 1, 'the left side needed one more');
   assert.equal(moves.length - toLeft, 2, 'the right side needed two more');
 });
+
+test('defender: report from the status JSON; the tool is offered only on Windows with XtraOS (ADR 0019)', async () => {
+  const { defenderReport, DEFENDER_TOOL } = await import('../src/hub/defender.js');
+  const ok = defenderReport(JSON.stringify({ antivirus: true, realtime: true, definitions: '2026-11-09T09:31:11', definitionsAgeDays: 4, lastQuickScan: '2026-11-08T11:29:02', lastFullScan: '', threats: [] }));
+  assert.match(ok, /Antivirus: on; real-time protection: on\./);
+  assert.match(ok, /4 day\(s\) old/);
+  assert.match(ok, /last full scan: never/);
+  assert.match(ok, /Threats found so far: none\./);
+  const bad = defenderReport(JSON.stringify({ antivirus: false, realtime: false, threats: { name: 'Trojan:Win32/Test', when: '2026-11-12T10:00:00' } }));
+  assert.match(bad, /Antivirus: OFF; real-time protection: OFF/);
+  assert.match(bad, /Trojan:Win32\/Test \(2026-11-12 10:00:00\)/);
+  assert.deepEqual((DEFENDER_TOOL.inputSchema as unknown as { properties: { op: { enum: string[] } } }).properties.op.enum, ['status', 'update', 'quick_scan'], 'no op that changes a setting');
+});
