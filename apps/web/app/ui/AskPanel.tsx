@@ -32,7 +32,12 @@ export function MicButton({ onText }: { onText: (t: string) => void }) {
   return (
     <span className="mic-wrap">
       <button type="button" className={v.listening ? 'mic on' : 'mic'} onClick={v.toggle} aria-pressed={v.listening} aria-label={v.listening ? 'Stop listening' : 'Speak instead of typing'} title={v.listening ? 'Stop listening' : 'Speak'}>
-        {v.listening ? '■' : '🎤'}
+        {v.listening ? '■' : (
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+            <rect x="9" y="3" width="6" height="11" rx="3" />
+            <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" />
+          </svg>
+        )}
       </button>
       {v.listening && <span className="small muted live">{v.interim || 'Listening…'}</span>}
       {v.error !== null && <span className="small bad-text">{v.error}</span>}

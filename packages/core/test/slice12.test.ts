@@ -201,6 +201,7 @@ test('import: a dry run shows the plan; apply takes servers and skills over with
     'claude-code mcp api unchanged',
     'claude-code mcp files unchanged',
     'claude-code skill review unchanged',
+    'claude-code hooks settings.json add',
     'codex mcp api add',
     'codex mcp files conflict',
     'codex skill review add',

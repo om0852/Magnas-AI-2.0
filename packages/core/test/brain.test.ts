@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
+// These tests check the fallback rules with Codex first (the default is Antigravity first, ADR 0018).
 import { ask, DEFAULT_BRAIN, type BrainSet } from '../src/brain/ask.js';
 import { brainPrompt } from '../src/brain/prompt.js';
 import { agyArgs, codexArgs, codexToolCalls, type BrainRun, type BrainRunner } from '../src/brain/runners.js';
@@ -9,6 +10,7 @@ import { hubServers } from '../src/hub/start.js';
 import { loadRegistry, parseRegistry } from '../src/registry.js';
 import { MagnusError } from '../src/types.js';
 import { fakeHome, fakeProtector, fakes, run } from './helpers.js';
+const CODEX_FIRST = { ...DEFAULT_BRAIN, order: ['codex', 'antigravity'] as ('codex' | 'antigravity')[] };
 
 const runOf = (over: Partial<BrainRun>): BrainRun => ({ ok: true, answer: 'done', toolCalls: [], callsKnown: true, timedOut: false, ms: 1, ...over });
 
@@ -43,6 +45,9 @@ test('codex args: only the hub, limited servers, its tools pre-approved, read-on
   ]);
   assert.deepEqual(a.slice(-3), ['-o', 'C:\\t\\answer.txt', 'the prompt']);
   assert.ok(!a.some((x) => /bypass|danger/i.test(x)), 'never the bypass flags');
+  const cheap = codexArgs('p', { command: 'n', args: [] }, ['xtraos'], 'h', 'o', { model: 'gpt-6-luna', effort: 'low' });
+  assert.deepEqual(cheap.slice(-7, -3), ['-m', 'gpt-6-luna', '-c', 'model_reasoning_effort="low"'], 'model and effort (ADR 0014)');
+  assert.deepEqual(agyArgs('p', 120_000, 'gemini-3.8-flash-low').slice(-2), ['--model', 'gemini-3.8-flash-low']);
   assert.deepEqual(agyArgs('p', 120_000), ['-p', 'p', '--sandbox', '--output-format', 'stream-json', '--print-timeout', '115s']);
   assert.ok(a.includes('--json'), 'Codex streams its steps (ADR 0012)');
   assert.deepEqual(codexToolCalls('x\nmcp: magnus/xtraos__status started\nmcp: magnus/xtraos__status (completed)\nmcp: magnus/xtraos__click started\n'), ['xtraos__status', 'xtraos__click']);
@@ -51,22 +56,22 @@ test('codex args: only the hub, limited servers, its tools pre-approved, read-on
 test('ask: the first brain that works answers', async () => {
   const seen: string[] = [];
   const brains: BrainSet = { codex: fake(runOf({ answer: 'opened' }), seen, 'codex'), antigravity: fake(runOf({}), seen, 'agy') };
-  const r = await ask('open YouTube', DEFAULT_BRAIN, brains);
+  const r = await ask('open YouTube', CODEX_FIRST, brains);
   assert.deepEqual([r.ok, r.brain, r.answer, seen], [true, 'codex', 'opened', ['codex:prompt']]);
-  await assert.rejects(ask('   ', DEFAULT_BRAIN, brains), MagnusError);
+  await assert.rejects(ask('   ', CODEX_FIRST, brains), MagnusError);
 });
 
 test('ask: falls back when a brain is missing or failed before any tool call', async () => {
   const seen: string[] = [];
   const quota = runOf({ ok: false, answer: 'usage limit reached', toolCalls: [] });
-  let r = await ask('t', DEFAULT_BRAIN, { codex: fake(quota, seen, 'codex'), antigravity: fake(runOf({ answer: 'did it' }), seen, 'agy') });
+  let r = await ask('t', CODEX_FIRST, { codex: fake(quota, seen, 'codex'), antigravity: fake(runOf({ answer: 'did it' }), seen, 'agy') });
   assert.deepEqual([r.ok, r.brain, r.answer], [true, 'antigravity', 'did it']);
   assert.deepEqual(r.attempts.map((a) => `${a.brain}:${a.outcome}`), ['codex:failed', 'antigravity:ok']);
 
-  r = await ask('t', DEFAULT_BRAIN, { codex: null, antigravity: fake(runOf({ answer: 'ok' }), seen, 'agy') });
+  r = await ask('t', CODEX_FIRST, { codex: null, antigravity: fake(runOf({ answer: 'ok' }), seen, 'agy') });
   assert.deepEqual(r.attempts.map((a) => `${a.brain}:${a.outcome}`), ['codex:not-installed', 'antigravity:ok']);
 
-  r = await ask('t', DEFAULT_BRAIN, { codex: null, antigravity: null });
+  r = await ask('t', CODEX_FIRST, { codex: null, antigravity: null });
   assert.equal(r.ok, false);
   assert.match(r.answer, /No brain is installed/);
 });
@@ -74,7 +79,7 @@ test('ask: falls back when a brain is missing or failed before any tool call', a
 test('ask: no fallback once a brain may have acted (no action twice)', async () => {
   const seen: string[] = [];
   const halfDone = runOf({ ok: false, answer: 'timed out', toolCalls: ['xtraos__click'], timedOut: true });
-  let r = await ask('send it', DEFAULT_BRAIN, { codex: fake(halfDone, seen, 'codex'), antigravity: fake(runOf({}), seen, 'agy') });
+  let r = await ask('send it', CODEX_FIRST, { codex: fake(halfDone, seen, 'codex'), antigravity: fake(runOf({}), seen, 'agy') });
   assert.equal(r.ok, false);
   assert.deepEqual(seen, ['codex:prompt'], 'Antigravity was not started');
   assert.match(r.stoppedBecause ?? '', /already called 1 tool/);
@@ -120,13 +125,18 @@ test('magnus ask: runs the brain with the registry servers, prints the outcome, 
   await run(env, f, 'add-mcp', 'xtraos', '--', 'node', 'x.mjs');
   const r = await run(env, f, 'ask', 'open', 'YouTube', '--brain', 'codex');
   assert.equal(r.code, 0);
-  assert.match(r.out, /Asking Codex CLI \(servers: xtraos; up to 300 s\)/);
+  assert.match(r.out, /Asking Codex CLI \(servers: xtraos; up to 600 s\)/);
   assert.match(r.out, /Codex CLI: ok in 0\.0 s, 1 tool call\(s\)\n\nfake: done$/);
   assert.deepEqual(f.brainCalls[0]?.servers, ['xtraos']);
-  assert.ok(f.brainCalls[0]?.prompt.endsWith('Task:\nopen YouTube'), 'flags are not part of the task');
+  assert.match(f.brainCalls[0]?.prompt ?? '', /Task:\nopen YouTube\n\n\(Magnus task t_[0-9a-f]{12}, token [\w-]{24}\./, 'flags are not part of the task; the task note follows');
   const log = fs.readFileSync(path.join(env.magnusHome, 'brain-log.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepEqual([log.length, log[0].task, log[0].brain, log[0].attempts[0].toolCalls], [1, 'open YouTube', 'codex', ['xtraos__status']]);
 
   await assert.rejects(run(env, f, 'ask', 'x', '--servers', 'nope'), (e) => e instanceof MagnusError && e.code === 'NOT_FOUND');
   await assert.rejects(run(env, f, 'ask', 'x', '--brain', 'gpt'), MagnusError);
+});
+
+test('brain order: Antigravity first by default, both brains see the Magnus hub (ADR 0018)', () => {
+  assert.deepEqual(DEFAULT_BRAIN.order, ['antigravity', 'codex']);
+  assert.equal(DEFAULT_BRAIN.agyModel, 'gemini-3.8-flash-medium');
 });

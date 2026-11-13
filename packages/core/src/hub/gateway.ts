@@ -2,6 +2,9 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult, type Tool } from '@modelcontextprotocol/sdk/types.js';
+import { ARRANGE_ICONS, arrangeIcons, type Layout } from './arrange.js';
+import { DESKTOP_TOOLS, DesktopHelper, RESTORE_WINDOWS, SHOW_DESKTOP } from './desktop.js';
+import type { BuiltinTools } from '../tasks/mcp-tools.js';
 import type { McpServer } from '../types.js';
 
 export const SEP = '__';
@@ -51,6 +54,8 @@ export class Gateway {
   private readonly up = new Map<string, Downstream>();
   private readonly t0 = Date.now();
   private listeners: (() => void)[] = [];
+  /** Desktop helpers (ADR 0016), offered when XtraOS is behind the hub. */
+  private readonly desktop = new DesktopHelper((n, a) => this.callTool(n, a));
 
   /** Starts every server at once; one that fails is kept with its error, the rest work. */
   constructor(
@@ -58,6 +63,8 @@ export class Gateway {
     connect: Connect,
     private readonly log: (line: string) => void = () => {},
     private readonly timing: Timing = TIMING,
+    /** Magnus's own tools (the task tools, ADR 0013), named magnus__… */
+    private readonly builtins?: BuiltinTools,
   ) {
     this.names = Object.keys(servers).sort();
     for (const name of this.names) {
@@ -105,6 +112,8 @@ export class Gateway {
         description: 'Magnus hub: the servers behind this hub, how many tools each has, any still starting or failed.',
         inputSchema: { type: 'object', properties: {} },
       },
+      ...(this.builtins?.tools ?? []),
+      ...(this.up.get('xtraos')?.client ? DESKTOP_TOOLS : []),
     ];
     for (const name of this.names) {
       for (const t of this.up.get(name)?.tools ?? []) tools.push({ ...t, name: `${name}${SEP}${t.name}` });
@@ -123,6 +132,33 @@ export class Gateway {
 
   async callTool(name: string, args: Record<string, unknown> | undefined): Promise<CallToolResult> {
     if (name === STATUS_TOOL) return textResult(this.status());
+    if (this.builtins?.tools.some((t) => t.name === name)) return this.builtins.call(name, args ?? {});
+    if (name === SHOW_DESKTOP) return this.desktop.show();
+    if (name === RESTORE_WINDOWS) return this.desktop.restore();
+    if (name === ARRANGE_ICONS) {
+      const l = args?.['layout'];
+      const layout: Layout = l === 'left' || l === 'right' ? l : 'left-right';
+      const before = this.desktop.pending;
+      await this.desktop.show();
+      const res = await arrangeIcons((n, a) => this.callTool(n, a), layout, this.log);
+      if (before === 0) await this.desktop.restore(); // put back what this call minimised
+      return res;
+    }
+    // A drag on the desktop that is covered: clear the desktop once and try again (ADR 0016).
+    if (name === 'xtraos__drag' && args?.['window'] === 'desktop') {
+      const first = await this.forward(name, args);
+      const t = first.content.map((c) => (c.type === 'text' ? c.text : '')).join(' ');
+      if (!t.includes('TARGET_OBSCURED')) return first;
+      const shown = await this.desktop.show();
+      const again = await this.forward(name, args);
+      const note = shown.content.map((c) => (c.type === 'text' ? c.text : '')).join(' ');
+      return { ...again, content: [{ type: 'text', text: `(Magnus: the desktop was covered. ${note})` }, ...again.content] };
+    }
+    return this.forward(name, args);
+  }
+
+  /** Calls a tool of a downstream server. */
+  private async forward(name: string, args: Record<string, unknown> | undefined): Promise<CallToolResult> {
     const at = name.indexOf(SEP);
     const server = at > 0 ? name.slice(0, at) : '';
     // A call for a server that is still starting waits for it.
@@ -151,6 +187,8 @@ export class Gateway {
   }
 
   async close(): Promise<void> {
+    // Windows minimised for desktop work come back even if the brain forgot (ADR 0016).
+    if (this.desktop.pending > 0) await this.desktop.restore().catch(() => undefined);
     // Servers still starting are closed when they arrive; closing does not wait for them.
     for (const n of this.names) if (!this.up.has(n)) void this.starting.get(n)?.then((d) => d.client?.close());
     await Promise.allSettled(this.names.map((n) => this.up.get(n)?.client?.close()));

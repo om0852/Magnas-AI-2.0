@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { addArgs, findClaude, removeArgs, type ClaudeLookup } from './claude.js';
 import { CLIENTS, type ClientDef } from './clients/defs.js';
 import { planJsonMcp } from './plan-json.js';
+import { planClaudeHooks } from './tasks/hooks.js';
 import { planRules } from './plan-rules.js';
 import { planTomlMcp } from './plan-toml.js';
 import { HUB_NAME, listSkills, loadRegistry, rulesText } from './registry.js';
@@ -202,6 +203,18 @@ export function sync(env: Env, opts: SyncOptions, deps: SyncDeps = defaultDeps(e
       if (opts.apply) {
         applySkills(skillsSource, dir, ops);
         mine.skills = ops.filter((o) => o.op === 'add' || o.op === 'update' || o.op === 'unchanged').map((o) => o.name);
+      }
+    }
+
+    // ADR 0013: Claude Code reports prompts, waiting and finish to Magnus through its hooks.
+    if (c.id === 'claude-code') {
+      const file = path.join(env.home, '.claude', 'settings.json');
+      const on = reg.clients[c.id]?.hooks !== false;
+      const plan = planClaudeHooks(readText(file), deps.self.command, deps.self.args[0] ?? '', on);
+      if (on || plan.op.op !== 'unchanged') add(c, 'hooks', [plan.op]); // switched off and absent: nothing to say
+      if (opts.apply && plan.text !== null) {
+        writeSafe(file, plan.text);
+        written.push(file);
       }
     }
 

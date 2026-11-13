@@ -149,6 +149,18 @@ export class RelayPc {
   private retry = 1000;
   /** The task running now (one at a time), so a phone can stop it (ADR 0012). */
   private task: AbortController | null = null;
+  /**
+   * The running (or last finished) task, so a phone that lost its connection, reloaded or came
+   * back later can follow it: its steps so far, then the live ones and the answer (ADR 0017).
+   */
+  private current: {
+    task: string;
+    chat: string | null;
+    started: number;
+    steps: unknown[];
+    done?: { result?: unknown; error?: string };
+    watchers: Set<(m: { progress?: unknown; done?: { result?: unknown; error?: string } }) => void>;
+  } | null = null;
 
   constructor(
     private readonly env: Env,
@@ -174,6 +186,23 @@ export class RelayPc {
         const ws = new WS(`${c.url}?role=pc&room=${c.room}`);
         this.ws = ws;
         ws.addEventListener('open', () => ws.send(JSON.stringify({ t: 'auth', secret: roomSecret })));
+        // Our own heartbeat (ADR 0017): no answer for 75 s means the line is dead; reconnect.
+        let heard = Date.now();
+        ws.addEventListener('message', () => (heard = Date.now()));
+        const beat = setInterval(() => {
+          if (ws.readyState !== 1) return;
+          if (Date.now() - heard > 75_000) {
+            this.deps.log('no answer from the relay for 75 s; reconnecting');
+            ws.close();
+            return;
+          }
+          try {
+            ws.send(JSON.stringify({ t: 'ping' }));
+          } catch {
+            // the close event follows
+          }
+        }, 20_000);
+        ws.addEventListener('close', () => clearInterval(beat));
         ws.addEventListener('message', (e) => void this.onRelay(String(e.data), () => {
           this.retry = 1000;
           this.deps.log(`connected to the relay (${new URL(c.url).host})`);
@@ -264,15 +293,51 @@ export class RelayPc {
           this.task?.abort();
           return await reply({ result: { stopped: running } });
         }
+        if (body.method === 'ask.current') {
+          const c = this.current;
+          return await reply({
+            result: c === null ? { running: false } : { running: c.done === undefined, task: c.task, chat: c.chat, started: c.started, steps: c.steps.length, finishedOk: c.done !== undefined && c.done.error === undefined },
+          });
+        }
+        if (body.method === 'ask.follow') {
+          const c = this.current;
+          if (c === null) return await reply({ result: { running: false } });
+          const push = (progress: unknown): void =>
+            void channel.seal({ id: body.id, progress }).then((x) => this.send(cid, { t: 'msg', ...x })).catch(() => undefined);
+          for (const st of c.steps) push(st);
+          const finish = (d: { result?: unknown; error?: string }): Promise<void> => (d.error !== undefined ? reply({ error: d.error, hint: '' }) : reply({ result: d.result }));
+          if (c.done !== undefined) return await finish(c.done);
+          await new Promise<void>((resolve) => {
+            const w = (m: { progress?: unknown; done?: { result?: unknown; error?: string } }): void => {
+              if (m.progress !== undefined) push(m.progress);
+              if (m.done !== undefined) {
+                c.watchers.delete(w);
+                void finish(m.done).finally(resolve);
+              }
+            };
+            c.watchers.add(w);
+          });
+          return;
+        }
         let run = {};
         if (body.method === 'ask') {
           if (this.task !== null) throw new MagnusError('BUSY', 'another task is still running; stop it or wait');
           const ctl = new AbortController();
           this.task = ctl;
+          const cur = { task: typeof params['task'] === 'string' ? params['task'] : '', chat: typeof params['chat'] === 'string' ? params['chat'] : null, started: this.now(), steps: [] as unknown[], watchers: new Set<(m: { progress?: unknown; done?: { result?: unknown; error?: string } }) => void>() };
+          this.current = cur;
           run = {
             signal: ctl.signal,
-            // Each step goes to the phone as it happens, encrypted like everything else.
-            onProgress: (progress: unknown) => void channel.seal({ id: body.id, progress }).then((s) => this.send(cid, { t: 'msg', ...s })),
+            // Each step goes to the phone as it happens, encrypted like everything else; it is
+            // also kept, so a phone that reconnects can catch up (ADR 0017).
+            onProgress: (progress: unknown) => {
+              if (cur.steps.length < 300) cur.steps.push(progress);
+              for (const w of [...cur.watchers]) w({ progress });
+              void channel
+                .seal({ id: body.id, progress })
+                .then((s) => this.send(cid, { t: 'msg', ...s }))
+                .catch(() => undefined); // that phone may be gone; the steps are kept for it
+            },
           };
         }
         const result = await rpc(body.method, params, device, {
@@ -285,7 +350,16 @@ export class RelayPc {
               saveRelay(this.env, c);
             }
           },
-        }, run).finally(() => {
+        }, run).then(
+          (r) => {
+            if (body.method === 'ask') this.finishCurrent({ result: r });
+            return r;
+          },
+          (e: unknown) => {
+            if (body.method === 'ask') this.finishCurrent({ error: e instanceof Error ? e.message : String(e) });
+            throw e;
+          },
+        ).finally(() => {
           if (body.method === 'ask') this.task = null;
         });
         await reply({ result });
@@ -293,6 +367,14 @@ export class RelayPc {
         await reply({ error: e instanceof Error ? e.message : String(e), hint: e instanceof MagnusError ? e.hint : '' });
       }
     }
+  }
+
+  /** Records the task's answer and hands it to every phone following it. */
+  private finishCurrent(done: { result?: unknown; error?: string }): void {
+    const c = this.current;
+    if (c === null || c.done !== undefined) return;
+    c.done = done;
+    for (const w of [...c.watchers]) w({ done });
   }
 
   private async pair(cid: string, m: Extract<PhoneMsg, { t: 'pair' }>): Promise<void> {

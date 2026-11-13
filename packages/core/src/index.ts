@@ -31,3 +31,6 @@ export { loadRelay, relayAppUrl, relayInvite, removeRelayDevice, type RelayConfi
 export { controlsFrom, type Control } from './remote/controls.js';
 export { dpapiProtector } from './secrets.js';
 export type { Progress, ProgressKind } from './brain/progress.js';
+export { answerQuestion, listTasks, type Task, type TaskStatus } from './tasks/tasks.js';
+export { trackedAsk } from './tasks/track.js';
+export { chatSend, deleteChat, getChat, listChats, renameChat, type Chat, type ChatMessage, type ChatSummary } from './chats/chats.js';

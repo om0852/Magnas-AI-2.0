@@ -156,7 +156,7 @@ test('http: a real round trip with the key; without it, 401', async () => {
     assert.equal(noKey.status, 401);
     const client = new Client({ name: 't', version: '1' });
     await client.connect(new StreamableHTTPClientTransport(new URL(hub.url), { requestInit: { headers: { authorization: `Bearer ${key}` } } }));
-    assert.deepEqual((await client.listTools()).tools.map((t) => t.name), [STATUS_TOOL, 'desk__click']);
+    assert.deepEqual((await client.listTools()).tools.map((t) => t.name), [STATUS_TOOL, 'magnus__task_start', 'magnus__task_update', 'magnus__task_done', 'magnus__ask_user', 'desk__click'], 'the task tools come with every hub');
     assert.equal(textOf(await client.callTool({ name: 'desk__click', arguments: { n: 1 } })), 'desk.click({"n":1})');
     assert.match(client.getInstructions() ?? '', /Magnus hub/);
     await client.close();
@@ -194,7 +194,7 @@ test('end to end: `magnus hub` as a real process in front of two real MCP server
   const client = new Client({ name: 'e2e', version: '1' });
   await client.connect(new StdioClientTransport({ command: process.execPath, args: [cli, 'hub', '--client', 'codex'], env: vars, stderr: 'ignore' }));
   try {
-    assert.deepEqual((await client.listTools()).tools.map((t) => t.name), [STATUS_TOOL, 'one__say', 'two__say']);
+    assert.deepEqual((await client.listTools()).tools.map((t) => t.name), [STATUS_TOOL, 'magnus__task_start', 'magnus__task_update', 'magnus__task_done', 'magnus__ask_user', 'one__say', 'two__say']);
     assert.equal(textOf(await client.callTool({ name: 'one__say', arguments: { text: 'hi' } })), 'first: hi');
     assert.equal(textOf(await client.callTool({ name: 'two__say', arguments: { text: 'yo' } })), 'second: yo');
     assert.match(textOf(await client.callTool({ name: STATUS_TOOL, arguments: {} })), /^dead: NOT AVAILABLE — .+\none: 1 tool\(s\)\ntwo: 1 tool\(s\)$/);

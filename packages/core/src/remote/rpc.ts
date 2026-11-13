@@ -13,9 +13,13 @@ export interface RpcDevice {
 export interface RpcDeps {
   xtraos: XtraosCall;
   /** Runs a task through the brain; the answer text. Progress and Stop: ADR 0012. */
-  ask: (task: string, opts?: RunOptions) => Promise<{ ok: boolean; answer: string; brain: string | null }>;
+  ask: (task: string, opts?: RunOptions, chat?: { id?: string }) => Promise<{ ok: boolean; answer: string; brain: string | null; chatId?: string; title?: string }>;
+  /** Conversations (ADR 0015). */
+  chats?: { list: () => unknown; get: (id: string) => unknown; rename: (id: string, title: string) => unknown; remove: (id: string) => void };
   /** Remembers the device's XtraOS approver id. */
   setApprover: (deviceId: string, approverId: string) => void;
+  /** The task log (ADR 0013). */
+  tasks?: { list: () => unknown; answer: (task: string, qid: string, answer: string) => void };
 }
 
 const isRef = (v: unknown, k: 'w' | 'e'): v is string => typeof v === 'string' && new RegExp(`^${k}\\d+$`).test(v);
@@ -73,7 +77,41 @@ export async function rpc(method: string, p: Record<string, unknown>, device: Rp
     case 'ask': {
       const task = p['task'];
       if (typeof task !== 'string' || task.trim() === '' || task.length > 4000) throw new MagnusError('BAD_ARGS', 'task is 1-4000 characters');
-      return deps.ask(task, run);
+      // chat: "new" starts a conversation, a chat id continues one (ADR 0015); absent: a one-off task.
+      const chat = p['chat'];
+      if (chat === undefined) return deps.ask(task, run);
+      if (chat !== 'new' && (typeof chat !== 'string' || !/^c_[0-9a-f]{16}$/.test(chat))) throw new MagnusError('BAD_ARGS', 'chat is "new" or a chat id');
+      return deps.ask(task, run, chat === 'new' ? {} : { id: chat });
+    }
+    case 'chats.list':
+    case 'chats.get':
+    case 'chats.rename':
+    case 'chats.delete': {
+      const c = deps.chats;
+      if (!c) throw new MagnusError('BAD_ARGS', 'chats are not available here');
+      if (method === 'chats.list') return { chats: c.list() };
+      const id = p['id'];
+      if (typeof id !== 'string' || !/^c_[0-9a-f]{16}$/.test(id)) throw new MagnusError('BAD_ARGS', 'a chat id is required');
+      if (method === 'chats.get') return { chat: c.get(id) };
+      if (method === 'chats.delete') {
+        c.remove(id);
+        return { deleted: true };
+      }
+      const title = p['title'];
+      if (typeof title !== 'string' || title.trim() === '' || title.length > 80) throw new MagnusError('BAD_ARGS', 'a title of 1-80 characters is required');
+      return { chat: c.rename(id, title) };
+    }
+    case 'tasks.list':
+      if (!deps.tasks) throw new MagnusError('BAD_ARGS', 'tasks are not available here');
+      return { tasks: deps.tasks.list() };
+    case 'tasks.answer': {
+      if (!deps.tasks) throw new MagnusError('BAD_ARGS', 'tasks are not available here');
+      const answer = p['answer'];
+      if (typeof p['task'] !== 'string' || typeof p['qid'] !== 'string' || typeof answer !== 'string' || answer.trim() === '' || answer.length > 2000) {
+        throw new MagnusError('BAD_ARGS', 'task, qid and an answer (1-2000 characters) are required');
+      }
+      deps.tasks.answer(p['task'], p['qid'], answer);
+      return { answered: true };
     }
     default:
       throw new MagnusError('BAD_ARGS', `unknown call "${method}"`);

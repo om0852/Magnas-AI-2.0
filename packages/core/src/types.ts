@@ -23,9 +23,9 @@ export interface Registry {
   version: 1;
   mcpServers: Record<string, McpServer>;
   /** Per tool: switched off, and how it gets its servers (default direct; ADR 0005). */
-  clients: Record<string, { enabled: boolean; mode?: 'direct' | 'hub' }>;
+  clients: Record<string, { enabled: boolean; mode?: 'direct' | 'hub'; hooks?: boolean }>;
   /** Brain settings (ADR 0007); omitted = defaults. */
-  brain?: { order?: ('codex' | 'antigravity')[]; servers?: string[]; timeoutSec?: number };
+  brain?: { order?: ('codex' | 'antigravity')[]; servers?: string[]; timeoutSec?: number; codexModel?: string; codexEffort?: Effort; agyModel?: string };
 }
 
 export type Op = 'add' | 'update' | 'remove' | 'unchanged' | 'conflict' | 'skip';
@@ -33,7 +33,7 @@ export type Op = 'add' | 'update' | 'remove' | 'unchanged' | 'conflict' | 'skip'
 /** One planned or applied change in one tool. */
 export interface Action {
   client: string;
-  kind: 'mcp' | 'skill' | 'rules';
+  kind: 'mcp' | 'skill' | 'rules' | 'hooks';
   name: string;
   op: Op;
   detail?: string;
@@ -57,3 +57,6 @@ export class MagnusError extends Error {
     this.name = 'MagnusError';
   }
 }
+
+/** Codex reasoning effort (ADR 0014). */
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';

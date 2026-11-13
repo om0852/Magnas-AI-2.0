@@ -8,7 +8,8 @@ import { PHONE_SERVER } from '../remote/phone-mcp.js';
 import { loadRegistry } from '../registry.js';
 import { readSecrets, resolveServer, secretRefs, type Protector } from '../secrets.js';
 import { MagnusError, type Env, type McpServer } from '../types.js';
-import { Gateway, makeHubServer, type Connect } from './gateway.js';
+import { taskTools } from '../tasks/mcp-tools.js';
+import { Gateway, type Timing, makeHubServer, TIMING, type Connect } from './gateway.js';
 import { serveHttp, HTTP_PATH } from './http.js';
 import { keyHash } from './key.js';
 
@@ -62,8 +63,9 @@ export async function runHubStdio(
   protector: () => Protector,
   connect: Connect = stdioConnect,
   only?: readonly string[],
+  timing: Timing = TIMING,
 ): Promise<number> {
-  const gateway = new Gateway(hubServers(env, clientId, protector, only), connect, (l) => process.stderr.write(l + '\n'));
+  const gateway = new Gateway(hubServers(env, clientId, protector, only), connect, (l) => process.stderr.write(l + '\n'), timing, taskTools(env, clientId ?? 'mcp'));
   const server = await makeHubServer(gateway, VERSION);
   const closed = new Promise<void>((resolve) => {
     server.onclose = () => resolve();
@@ -84,7 +86,7 @@ export async function startHubHttp(
 ): Promise<{ port: number; url: string; close: () => Promise<void> }> {
   const hash = keyHash(env);
   if (hash === null) throw new MagnusError('NO_KEY', 'no Magnus key yet', 'Run: magnus key new');
-  const gateway = new Gateway(hubServers(env, undefined, protector), connect, (l) => process.stderr.write(l + '\n'));
+  const gateway = new Gateway(hubServers(env, undefined, protector), connect, (l) => process.stderr.write(l + '\n'), TIMING, taskTools(env, 'http'));
   const srv = await serveHttp(() => makeHubServer(gateway, VERSION, false), port, hash);
   const actual = (srv.address() as AddressInfo).port;
   return {

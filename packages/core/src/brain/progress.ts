@@ -2,6 +2,7 @@
  * Live progress of a brain run (ADR 0012): the steps the AI CLI reports while it works, turned
  * into short lines the phone and the dashboard show. Pure parsers of each CLI's JSON lines.
  */
+import { scrubSecrets } from '../tasks/scrub.js';
 
 export type ProgressKind = 'thinking' | 'tool' | 'tool-done' | 'tool-failed' | 'say' | 'note';
 
@@ -24,10 +25,21 @@ const clip = (s: string, n: number): string => {
   return one.length > n ? `${one.slice(0, n - 1)}…` : one;
 };
 
-function args(v: unknown): string {
+/** Argument names whose values are never shown in a step (ADR 0016): task tokens, secrets. */
+const HIDDEN_ARG = /^(token|password|passwd|secret|api_?key|access_?key|otp|code|pin)$/i;
+
+export function args(v: unknown): string {
   if (v === null || v === undefined) return '';
-  const s = JSON.stringify(v);
-  return s === '{}' ? '' : ` ${clip(s, 80)}`;
+  let o: unknown = v;
+  if (typeof v === 'string') {
+    try {
+      o = JSON.parse(v);
+    } catch {
+      o = v;
+    }
+  }
+  const s = JSON.stringify(o, (k, x: unknown) => (k !== '' && HIDDEN_ARG.test(k) ? '…' : x));
+  return s === '{}' || s === '""' ? '' : ` ${clip(scrubSecrets(s), 80)}`;
 }
 
 function firstText(result: unknown): string {

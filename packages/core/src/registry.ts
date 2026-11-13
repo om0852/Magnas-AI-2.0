@@ -79,7 +79,11 @@ export function parseRegistry(text: string): Registry {
   const rawClients = raw['clients'] ?? {};
   if (!isRecord(rawClients)) throw new MagnusError('BAD_REGISTRY', '"clients" must be an object');
   for (const [id, v] of Object.entries(rawClients)) {
-    clients[id] = { enabled: !(isRecord(v) && v['enabled'] === false), ...(isRecord(v) && v['mode'] === 'hub' ? { mode: 'hub' as const } : {}) };
+    clients[id] = {
+      enabled: !(isRecord(v) && v['enabled'] === false),
+      ...(isRecord(v) && v['mode'] === 'hub' ? { mode: 'hub' as const } : {}),
+      ...(isRecord(v) && v['hooks'] === false ? { hooks: false } : {}),
+    };
   }
   let brain: Registry['brain'];
   const rawBrain = raw['brain'];
@@ -104,6 +108,18 @@ export function parseRegistry(text: string): Registry {
         throw new MagnusError('BAD_REGISTRY', '"brain.timeoutSec" is a whole number from 30 to 3600');
       }
       brain.timeoutSec = t;
+    }
+    // ADR 0014: which model each brain uses. Plain names only: they go on a command line.
+    for (const k of ['codexModel', 'agyModel'] as const) {
+      const v = rawBrain[k];
+      if (v === undefined) continue;
+      if (typeof v !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(v)) throw new MagnusError('BAD_REGISTRY', `"brain.${k}" is a model name such as gpt-6-luna`);
+      brain[k] = v;
+    }
+    if (rawBrain['codexEffort'] !== undefined) {
+      const e = rawBrain['codexEffort'];
+      if (e !== 'low' && e !== 'medium' && e !== 'high' && e !== 'xhigh' && e !== 'max') throw new MagnusError('BAD_REGISTRY', '"brain.codexEffort" is low, medium, high, xhigh or max');
+      brain.codexEffort = e;
     }
   }
   return { version: 1, mcpServers: servers, clients, ...(brain !== undefined ? { brain } : {}) };

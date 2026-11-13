@@ -119,6 +119,8 @@ the server and skill names Magnus manages per tool.
 | `magnus hub [--client <id>]` | The hub on stdin/stdout (what a hub-mode tool starts) |
 | `magnus key new` / `status` | Make the Magnus key (shown once) / say whether one is set |
 | `magnus serve [--port N]` | The hub over HTTP on 127.0.0.1, default port 8787, path `/mcp` |
+| `magnus tasks [n]` / `tasks answer <task> <qid> <text>` | The task list (ADR 0013) / answer a tool's question |
+| `magnus event claude-code` | Records one Claude Code hook call from stdin; prints nothing, always exits 0 (what the hooks run) |
 
 Exit codes: 0 ok, 1 error, 2 the plan has conflicts.
 
@@ -236,6 +238,23 @@ buttons, type and press Enter), Ask (Magnus does a task).
   and `phone__send_message` reach only the owner's chat (no recipient argument; max 50 MB).
 - XtraOS approvals still appear on the PC screen only (slice 3.2 moves them to the phone).
 - Files in `~/.magnus`: `remote.json` (owner's Telegram ids, pairing code while valid).
+
+## Tasks (ADR 0013)
+- **Log:** `~/.magnus/tasks/events.jsonl`, one JSON event per line (`created`, `step`, `status`,
+  `question`, `answer`, `done`, `failed`, `stopped`). A task is the fold of its events; at 1 MB
+  the file is renamed to `events.1.jsonl` (both are read; the one before is dropped). Every text is scrubbed of secrets and cut before it is written.
+- **From any MCP client:** the hub adds `magnus__task_start` (returns a task id and a token),
+  `magnus__task_update`, `magnus__task_done` and `magnus__ask_user` (waits 10-600 s, default 300,
+  for the owner's answer). Updating a task needs its token; only the token's SHA-256 is stored.
+- **From Claude Code:** `magnus sync` adds one handler to `UserPromptSubmit`, `Notification` and
+  `Stop` in `~/.claude/settings.json` (exec form, `async: true`, 30 s), keeping every other hook
+  and setting; a file with comments is left untouched. The task id is `claude-code:<session id>`.
+  A Notification of a waiting type (permission, idle, elicitation) marks the task "needs you".
+  `"hooks": false` on the `claude-code` client in `magnus.json` removes them at the next sync.
+- **From the brain:** `magnus ask`, the dashboard and the phone log their tasks with tool steps,
+  and the prompt carries the task id and token so the brain can use `magnus__ask_user`.
+- **Seen in:** the dashboard's Tasks card and `/m`'s Tasks tab (`GET/POST /api/tasks`), the phone
+  app's Tasks tab (`tasks.list`, `tasks.answer` over the relay, refreshed every 3 s), `magnus tasks`.
 
 ## Secrets
 Write `${secret:NAME}` in a server's `env` value or `args`. The value lives only in

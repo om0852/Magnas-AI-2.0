@@ -58,7 +58,12 @@ export function findAgy(vars: NodeJS.ProcessEnv = process.env): Launcher | null 
 }
 
 /** `codex exec` with only the Magnus hub (pure). `hub`: how to start `magnus hub`. */
-export function codexArgs(prompt: string, hub: Launcher, servers: readonly string[], magnusHome: string, lastFile: string): string[] {
+export interface CodexModel {
+  model?: string;
+  effort?: string;
+}
+
+export function codexArgs(prompt: string, hub: Launcher, servers: readonly string[], magnusHome: string, lastFile: string, m: CodexModel = {}): string[] {
   const toml = (v: unknown): string => JSON.stringify(v);
   return [
     'exec',
@@ -78,6 +83,8 @@ export function codexArgs(prompt: string, hub: Launcher, servers: readonly strin
     'mcp_servers.magnus.default_tools_approval_mode="approve"',
     '-c',
     'mcp_servers.magnus.startup_timeout_sec=60',
+    ...(m.model !== undefined ? ['-m', m.model] : []),
+    ...(m.effort !== undefined ? ['-c', `model_reasoning_effort=${toml(m.effort)}`] : []),
     '-o',
     lastFile,
     prompt,
@@ -85,8 +92,8 @@ export function codexArgs(prompt: string, hub: Launcher, servers: readonly strin
 }
 
 /** `agy -p` (pure). */
-export function agyArgs(prompt: string, timeoutMs: number): string[] {
-  return ['-p', prompt, '--sandbox', '--output-format', 'stream-json', '--print-timeout', `${Math.max(10, Math.floor(timeoutMs / 1000) - 5)}s`];
+export function agyArgs(prompt: string, timeoutMs: number, model?: string): string[] {
+  return ['-p', prompt, '--sandbox', '--output-format', 'stream-json', '--print-timeout', `${Math.max(10, Math.floor(timeoutMs / 1000) - 5)}s`, ...(model !== undefined ? ['--model', model] : [])];
 }
 
 /** The MCP calls Codex printed on stderr ("mcp: magnus/<tool> started"). Pure. */
@@ -152,12 +159,24 @@ function runIn(cwd: string, l: Launcher, args: string[], timeoutMs: number, onLi
   });
 }
 
-function workDir(): string {
+/**
+ * Best effort: on Windows a program the brain started (an app, a viewer) can still hold a file
+ * in the folder. A leftover temp folder must never turn a finished task into a failure.
+ */
+export function removeWorkDir(dir: string): void {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+  } catch {
+    // left for Windows' own temp cleanup
+  }
+}
+
+export function workDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'magnus-brain-'));
 }
 
 /** The Codex brain with the hub limited to `servers`. */
-export function codexRunner(codex: Launcher, hub: Launcher, servers: readonly string[], env: Env): BrainRunner {
+export function codexRunner(codex: Launcher, hub: Launcher, servers: readonly string[], env: Env, model: CodexModel = {}): BrainRunner {
   return async (prompt, timeoutMs, opts = {}) => {
     const cwd = workDir();
     const last = path.join(cwd, 'answer.txt');
@@ -167,7 +186,7 @@ export function codexRunner(codex: Launcher, hub: Launcher, servers: readonly st
     const r = await runIn(
       cwd,
       codex,
-      codexArgs(prompt, hub, servers, env.magnusHome, last),
+      codexArgs(prompt, hub, servers, env.magnusHome, last, model),
       timeoutMs,
       (line) => {
         const p = parseCodexLine(line);
@@ -179,7 +198,7 @@ export function codexRunner(codex: Launcher, hub: Launcher, servers: readonly st
     );
     const file = fs.existsSync(last) ? fs.readFileSync(last, 'utf8').trim() : '';
     const answer = file !== '' ? file : said.trim();
-    fs.rmSync(cwd, { recursive: true, force: true });
+    removeWorkDir(cwd);
     const tail = r.stderr.trim().split('\n').slice(-3).join(' ').slice(0, 300);
     const toolCalls = calls.length > 0 ? calls : codexToolCalls(r.stderr);
     return {
@@ -195,7 +214,7 @@ export function codexRunner(codex: Launcher, hub: Launcher, servers: readonly st
 }
 
 /** The Antigravity brain (its own MCP servers; the prompt names the allowed ones). */
-export function agyRunner(agy: Launcher): BrainRunner {
+export function agyRunner(agy: Launcher, model?: string): BrainRunner {
   return async (prompt, timeoutMs, opts = {}) => {
     const cwd = workDir();
     const t0 = Date.now();
@@ -206,7 +225,7 @@ export function agyRunner(agy: Launcher): BrainRunner {
     const r = await runIn(
       cwd,
       agy,
-      agyArgs(prompt, timeoutMs),
+      agyArgs(prompt, timeoutMs, model),
       timeoutMs,
       (line) => {
         const p = parseAgyLine(line);
@@ -222,7 +241,7 @@ export function agyRunner(agy: Launcher): BrainRunner {
       },
       opts.signal,
     );
-    fs.rmSync(cwd, { recursive: true, force: true });
+    removeWorkDir(cwd);
     return {
       ok: r.code === 0 && !r.timedOut && !r.stopped && answer !== '',
       answer: r.stopped ? 'Stopped by you.' : answer !== '' ? answer : r.timedOut ? 'stopped: time limit reached' : r.stderr.trim().slice(0, 300),

@@ -39,6 +39,7 @@ test('sync: a dry run writes nothing; apply writes MCP servers, skills and rules
     [
       'claude-code mcp demo add',
       'claude-code skill review add',
+      'claude-code hooks settings.json add',
       'claude-code rules CLAUDE.md add',
       'codex mcp demo add',
       'codex skill review add',
@@ -104,10 +105,10 @@ test('sync: per-server tools, a switched-off tool, --client, and clear errors', 
   await run(env, f, 'init');
   await run(env, f, 'add-mcp', 'only-code', '--client', 'vscode', '--', 'node', 'x.mjs');
   const res = sync(env, { apply: false, force: false }, f.deps.sync);
-  assert.deepEqual(res.actions.map((a) => `${a.client} ${a.name}`), ['vscode only-code']);
+  assert.deepEqual(res.actions.map((a) => `${a.client} ${a.name}`), ['claude-code settings.json', 'vscode only-code']);
 
   const reg = JSON.parse(fs.readFileSync(path.join(env.magnusHome, 'magnus.json'), 'utf8'));
-  reg.clients = { vscode: { enabled: false } };
+  reg.clients = { vscode: { enabled: false }, 'claude-code': { hooks: false } }; // hooks: false opts out of the Claude Code hooks
   fs.writeFileSync(path.join(env.magnusHome, 'magnus.json'), JSON.stringify(reg));
   assert.deepEqual(sync(env, { apply: false, force: false }, f.deps.sync).actions, []);
   assert.match((await run(env, f, 'status')).out, /vscode\s+installed, switched off/);

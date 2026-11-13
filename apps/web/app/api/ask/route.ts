@@ -3,7 +3,7 @@
  * (ADR 0012). The answer is newline-delimited JSON: {"progress": …} lines, then {"result": …}.
  * DELETE stops the task that is running. One task at a time.
  */
-import { ask, brainConfig, logAsk, MagnusError, realBrains, type Progress } from '@magnus/core';
+import { brainConfig, chatSend, logAsk, MagnusError, realBrains, trackedAsk, type Progress } from '@magnus/core';
 import { access, api, env, syncDeps } from '@/lib/guard';
 
 export const dynamic = 'force-dynamic';
@@ -14,8 +14,11 @@ let running: AbortController | null = null;
 export async function POST(request: Request): Promise<Response> {
   const a = await access('POST');
   if (!a.ok) return Response.json({ error: a.message }, { status: a.status });
-  const body = (await request.json().catch(() => null)) as { task?: unknown } | null;
+  const body = (await request.json().catch(() => null)) as { task?: unknown; chat?: unknown } | null;
   const task = typeof body?.task === 'string' ? body.task : '';
+  // chat: "new" starts a conversation, a chat id continues one (ADR 0015); absent: a one-off task.
+  const chat = body?.chat;
+  if (chat !== undefined && chat !== 'new' && (typeof chat !== 'string' || !/^c_[0-9a-f]{16}$/.test(chat))) return Response.json({ error: 'chat is "new" or a chat id' }, { status: 400 });
   if (task.trim() === '') return Response.json({ error: 'write a task first' }, { status: 400 });
   if (task.length > 4000) return Response.json({ error: 'the task is over 4,000 characters' }, { status: 400 });
   if (running) return Response.json({ error: 'another task is still running; stop it or wait for it to finish' }, { status: 409 });
@@ -38,10 +41,10 @@ export async function POST(request: Request): Promise<Response> {
         const e = env();
         const cfg = brainConfig(e);
         const self = syncDeps(e).self;
-        const res = await ask(task, cfg, realBrains(e, { command: self.command, args: self.args }, cfg.servers), {
-          signal: ctl.signal,
-          onProgress: (progress: Progress) => send({ progress }),
-        });
+        const brains = realBrains(e, { command: self.command, args: self.args }, cfg.servers);
+        const source = a.who === 'device' ? 'phone' : 'dashboard';
+        const opts = { signal: ctl.signal, onProgress: (progress: Progress) => send({ progress }) };
+        const res = chat === undefined ? await trackedAsk(e, task, cfg, brains, source, opts) : await chatSend(e, chat === 'new' ? undefined : (chat as string), task, cfg, brains, source, opts);
         logAsk(e, task, res);
         send({
           result: {
@@ -49,6 +52,7 @@ export async function POST(request: Request): Promise<Response> {
             brain: res.brain,
             answer: res.answer,
             stoppedBecause: res.stoppedBecause ?? null,
+            ...('chatId' in res ? { chatId: res.chatId, title: res.title } : {}),
             attempts: res.attempts.map((x) => ({
               brain: x.brain,
               outcome: x.outcome,

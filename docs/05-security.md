@@ -54,6 +54,17 @@ Then (slice 3.3, ADR 0010) without a VPN, through the owner's own relay:
   are all refused.
 - Accepted risk: the phone app's code is served by the relay (the owner's own VM).
 
+Then (slice 3.6, ADR 0013) one task list for every AI tool:
+- What a tool reports is data: shown to the owner, never run. Texts are length-limited and
+  scrubbed of keys, tokens, passwords in URLs and private keys before they are stored or sent.
+- A task started over MCP gets a random token (only its hash is stored); one tool cannot update,
+  finish or ask on another's task. Tokens never go to the phone.
+- Claude Code hooks run `magnus event claude-code` in the background: it prints nothing and
+  always exits 0, so it cannot block or steer Claude Code. Installing them is a `magnus sync`
+  change the owner sees in the plan and applies (a backup of settings.json is kept).
+- An answer to a tool's question is the owner's text, given to that tool only; it is never an
+  XtraOS approval.
+
 General rules for any remote access:
 - **Pairing.** A phone is paired on the PC, in person (a code shown on the PC screen). The
   phone keeps a private key; the PC keeps the public key. Pairings can be listed and revoked.

@@ -52,7 +52,9 @@ drive their own PC by voice or from their phone, safely.
 | 3.3 | Phone access with no VPN: the owner's own WebSocket relay, end-to-end encrypted (ECDH P-256 + AES-GCM, keys set up through a QR code); phone app served by the relay; `magnus relay setup/pair/run` — ADR 0010, docs/06 | built, unit- and end-to-end tested; live on this PC with a local relay and the browser pane as the phone; relay not yet deployed (owner's Oracle VM) |
 | 3.4 | Start the relay connection and XtraOS at sign-in (`magnus autostart`) — ADR 0011 | built, unit-tested; on for the owner, checked by starting it as sign-in does |
 | 3.5 | Live steps of a task and a Stop button (dashboard, `/m`, phone over the relay, CLI); voice typing on desktop and phone — ADR 0012 | built, tested; steps checked live with the real Codex CLI; voice not yet tried with a microphone |
-| 3.6 | Notifications for new approvals and for apps waiting on the user | next |
+| 3.6 | One task list for Magnus and every AI tool: `magnus__task_*` and `magnus__ask_user` tools in the hub (any MCP client), Claude Code hooks installed by `magnus sync`, brain tasks logged; Tasks in the dashboard, `/m` and the phone app, with answers by button, text or voice; secrets masked before storing — ADR 0013 | built, unit- and end-to-end tested (relay); `magnus event claude-code` checked as a real process; hooks not yet applied to the owner's Claude Code |
+| 3.7 | ChatGPT-style chat with memory in the phone app and the dashboard (`/chat`): chats list, new chat, continue, rename, delete; earlier turns replayed to the brain; cheap models by default (ADR 0014) — ADR 0015 | built, unit-tested; checked live in the browser pane (phone and wide layouts, real Codex remembering across turns and across phone and dashboard); not yet deployed to the relay |
+| 3.8 | Notifications for new approvals and for tasks waiting on the user | next |
 
 ## Not goals
 - Magnus is not a new model and trains nothing.

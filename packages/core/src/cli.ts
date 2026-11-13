@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 /** The `magnus` command: registry, sync, import, secrets, and the hub (stdio and HTTP). */
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   autostartOff,
@@ -15,6 +16,10 @@ import {
   type RunList,
 } from './autostart.js';
 import { ask, brainConfig, logAsk, realBrains, type BrainSet } from './brain/ask.js';
+import { handleClaudeHook } from './tasks/hooks.js';
+import { answerQuestion, listTasks } from './tasks/tasks.js';
+import { trackedAsk } from './tasks/track.js';
+import { chatSend, deleteChat, getChat, listChats, renameChat } from './chats/chats.js';
 import { BRAIN_NAMES } from './brain/runners.js';
 import { CLIENTS } from './clients/defs.js';
 import { Bot } from './remote/bot.js';
@@ -27,6 +32,7 @@ import { setClientMode } from './dashboard.js';
 import { DEFAULT_PORT } from './hub/http.js';
 import { keyHash, newKey } from './hub/key.js';
 import { runHubStdio, startHubHttp } from './hub/start.js';
+import { TIMING } from './hub/gateway.js';
 import { importFromTools } from './import.js';
 import {
   RESERVED_NAMES,
@@ -71,6 +77,9 @@ const HELP = `magnus — one hub for your MCP servers, skills and rules
   magnus relay setup <address> [--new] | pair | run [--log <file>] | devices | remove <id>
                                       your phone through your own encrypted relay (ADR 0010)
   magnus autostart on | off | status  start the relay connection and XtraOS when you sign in
+  magnus tasks [n] | answer <task> <qid> <text>
+                                      tasks from Magnus and your AI tools (ADR 0013)
+  magnus event claude-code            used by Claude Code's hooks (installed by sync)
   magnus key new | status             the Magnus key for the HTTP hub (shown once, never stored in plain)
   magnus serve [--port N]             the hub over HTTP on 127.0.0.1 (needs the key on every request)
 `;
@@ -298,7 +307,7 @@ async function runAsk(env: Env, args: string[], out: Out, deps: CliDeps): Promis
   const onInt = (): void => ctl.abort();
   process.once('SIGINT', onInt);
   const icon: Record<string, string> = { thinking: '…', tool: '→', 'tool-done': '✓', 'tool-failed': '✗', say: '»', note: '·' };
-  const res = await ask(task, cfg, deps.brains(cfg.servers), {
+  const res = await trackedAsk(env, task, cfg, deps.brains(cfg.servers), 'cli', {
     signal: ctl.signal,
     onProgress: (p) => out(`  ${(p.ms / 1000).toFixed(0).padStart(3)}s ${icon[p.kind] ?? '·'} ${p.text}`),
   }).finally(() => process.off('SIGINT', onInt));
@@ -409,17 +418,40 @@ async function relayCmd(env: Env, args: string[], out: Out, deps: CliDeps): Prom
     }
     const logFile = valuesOf(args, '--log')[0];
     const say: Out = logFile !== undefined ? fileLog(logFile) : (l) => out(`${new Date().toISOString().slice(11, 19)} ${l}`);
+    // A long-running connection must not die silently: errors go to the log; a stray rejected
+    // promise is logged and the connection keeps running (an uncaught exception still ends it,
+    // logged, and the next sign-in or a restart brings it back).
+    process.on('unhandledRejection', (e) => say(`error (kept running): ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`));
+    process.on('uncaughtException', (e) => {
+      say(`fatal: ${e.stack ?? e.message}`);
+      process.exit(1);
+    });
+    process.on('exit', (code) => say(`relay connection stopped (exit code ${code})`));
+    // Freeze detector: if this program stalls (a busy PC), the log says so (ADR 0017).
+    let tick = Date.now();
+    setInterval(() => {
+      const lag = Date.now() - tick - 1000;
+      if (lag > 5000) say(`this program was frozen for ${Math.round(lag / 1000)} s (the PC was very busy, or it slept)`);
+      tick = Date.now();
+    }, 1000).unref();
     const cfg = brainConfig(env);
     const pc = new RelayPc(env, {
       protector: deps.protector,
       log: say,
       rpc: {
         xtraos: xtraosCaller(),
-        ask: async (task, opts) => {
-          const res = await ask(task, cfg, deps.brains(cfg.servers), opts);
+        tasks: { list: () => listTasks(env, 30), answer: (t, q, a) => answerQuestion(env, t, q, a, 'phone') },
+        ask: async (task, opts, chat) => {
+          if (chat !== undefined) {
+            const res = await chatSend(env, chat.id, task, cfg, deps.brains(cfg.servers), 'phone', opts);
+            logAsk(env, task, res);
+            return { ok: res.ok, answer: res.answer, brain: res.brain, chatId: res.chatId, title: res.title };
+          }
+          const res = await trackedAsk(env, task, cfg, deps.brains(cfg.servers), 'phone', opts);
           logAsk(env, task, res);
           return { ok: res.ok, answer: res.answer, brain: res.brain };
         },
+        chats: { list: () => listChats(env), get: (id) => getChat(env, id), rename: (id, t) => renameChat(env, id, t), remove: (id) => deleteChat(env, id) },
       },
     });
     await pc.start();
@@ -462,6 +494,45 @@ async function autostartCmd(env: Env, args: string[], out: Out, list: RunList = 
   throw new MagnusError('BAD_ARGS', 'usage: magnus autostart on | off | status');
 }
 
+/**
+ * `magnus event claude-code`: a Claude Code hook (ADR 0013). Reads the hook's JSON on stdin and
+ * records it. Prints nothing and always exits 0, so it can never block or disturb Claude Code.
+ */
+async function hookEvent(env: Env, args: string[]): Promise<number> {
+  const log = fileLog(path.join(env.magnusHome, 'logs', 'hooks.log'));
+  try {
+    if (args[0] !== 'claude-code') return 0;
+    let raw = '';
+    process.stdin.setEncoding('utf8');
+    for await (const chunk of process.stdin) raw += String(chunk);
+    handleClaudeHook(env, JSON.parse(raw.replace(/^\uFEFF/, '')));
+  } catch (e) {
+    log(`claude-code hook not recorded: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  return 0;
+}
+
+const STATUS_WORD = { working: 'working', 'needs-you': 'NEEDS YOU', done: 'done', failed: 'failed', stopped: 'stopped' } as const;
+
+function tasksCmd(env: Env, args: string[], out: Out): number {
+  if (args[0] === 'answer') {
+    const [, task, qid, ...words] = args;
+    if (task === undefined || qid === undefined || words.length === 0) throw new MagnusError('BAD_ARGS', 'usage: magnus tasks answer <task> <question id> <answer…>');
+    answerQuestion(env, task, qid, words.join(' '), 'cli');
+    out('Answered.');
+    return 0;
+  }
+  const tasks = listTasks(env, Number(args[0] ?? 15) || 15);
+  if (tasks.length === 0) out('No tasks yet.');
+  for (const t of tasks) {
+    out(`${t.updated.slice(5, 16).replace('T', ' ')}  ${STATUS_WORD[t.status].padEnd(9)} ${t.source.padEnd(12)} ${t.title.slice(0, 70)}`);
+    if (t.question) out(`    ? ${t.question.text}  (magnus tasks answer ${t.id} ${t.question.qid} <answer>)`);
+    else if (t.status === 'needs-you' && t.steps.length > 0) out(`    ! ${t.steps.at(-1)?.text}`);
+    if (t.result !== undefined && t.status !== 'working') out(`    = ${t.result.replace(/\s+/g, ' ').slice(0, 110)}`);
+  }
+  return 0;
+}
+
 /** Runs one command; returns the exit code (a promise for the commands that wait). */
 export function main(argv: string[], env: Env, out: Out, deps: CliDeps = realDeps(env, false)): number | Promise<number> {
   const [cmd, ...args] = argv;
@@ -487,7 +558,10 @@ export function main(argv: string[], env: Env, out: Out, deps: CliDeps = realDep
       return 0;
     case 'hub': {
       const only = valuesOf(args, '--servers')[0]?.split(',').filter((s) => s !== '');
-      return runHubStdio(env, valuesOf(args, '--client')[0], deps.protector, undefined, only);
+      // --quick (ADR 0018): answer a new client within ~2 s (Antigravity starts servers lazily and
+      // waits only briefly); servers that come up later add their tools then.
+      const quick = args.includes('--quick') ? { ...TIMING, listMs: 1500, instructionsMs: 300 } : TIMING;
+      return runHubStdio(env, valuesOf(args, '--client')[0], deps.protector, undefined, only, quick);
     }
     case 'ask':
       return runAsk(env, args, out, deps);
@@ -495,6 +569,10 @@ export function main(argv: string[], env: Env, out: Out, deps: CliDeps = realDep
       return remote(env, args, out, deps);
     case 'relay':
       return relayCmd(env, args, out, deps);
+    case 'event':
+      return hookEvent(env, args);
+    case 'tasks':
+      return tasksCmd(env, args, out);
     case 'autostart':
       return autostartCmd(env, args, out);
     case 'phone-mcp':

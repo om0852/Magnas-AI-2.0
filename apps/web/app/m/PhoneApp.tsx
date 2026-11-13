@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { canSign, keyCode, publicKeyB64, signAnswer } from '@/lib/device-key';
 import { AskPanel, MicButton } from '../ui/AskPanel';
+import { TasksPanel } from '../ui/TasksPanel';
 
 interface Dialog {
   uid: string;
@@ -261,7 +262,7 @@ function Windows() {
 }
 
 export function PhoneApp({ isDevice }: { isDevice: boolean }) {
-  const [tab, setTab] = useState<'approvals' | 'windows' | 'ask'>('approvals');
+  const [tab, setTab] = useState<'approvals' | 'tasks' | 'windows' | 'ask'>('approvals');
   return (
     <main className="phone">
       <header className="top">
@@ -272,13 +273,14 @@ export function PhoneApp({ isDevice }: { isDevice: boolean }) {
         <span className="pill">{isDevice ? 'paired device' : 'this PC'}</span>
       </header>
       <nav className="tabs" aria-label="Sections">
-        {(['approvals', 'windows', 'ask'] as const).map((t) => (
+        {(['approvals', 'tasks', 'windows', 'ask'] as const).map((t) => (
           <button key={t} aria-pressed={tab === t} onClick={() => setTab(t)}>
-            {t === 'approvals' ? 'Approvals' : t === 'windows' ? 'Windows' : 'Ask'}
+            {t === 'approvals' ? 'Approvals' : t === 'tasks' ? 'Tasks' : t === 'windows' ? 'Windows' : 'Ask'}
           </button>
         ))}
       </nav>
       {tab === 'approvals' && <Approvals isDevice={isDevice} />}
+      {tab === 'tasks' && <TasksPanel />}
       {tab === 'windows' && <Windows />}
       {tab === 'ask' && <AskPanel brains="Codex CLI, then Antigravity CLI" servers="the brain's servers" timeoutSec={300} />}
     </main>

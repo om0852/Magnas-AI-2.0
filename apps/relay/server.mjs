@@ -98,8 +98,10 @@ export function createRelay({ publicDir, dataFile, log = () => {} }) {
     }
     const ok = limiter();
     const r = room(id);
-    ws.isAlive = true;
-    ws.on('pong', () => (ws.isAlive = true));
+    ws.missed = 0;
+    // Any sign of life counts: a pong, or any message (a busy PC may answer pings late).
+    ws.on('pong', () => (ws.missed = 0));
+    ws.on('message', () => (ws.missed = 0));
 
     if (role === 'phone') {
       if (r.phones.size >= LIMITS.phonesPerRoom) {
@@ -153,6 +155,8 @@ export function createRelay({ publicDir, dataFile, log = () => {} }) {
         const phone = r.phones.get(msg.cid);
         if (phone) send(phone, msg.m);
       }
+      // The PC's own heartbeat: it notices a dead connection quickly and reconnects.
+      if (msg.t === 'ping') send(ws, { t: 'pong' });
     });
     ws.on('close', () => {
       clearTimeout(timer);
@@ -163,12 +167,13 @@ export function createRelay({ publicDir, dataFile, log = () => {} }) {
     });
   });
 
-  // Drop dead connections (mobile networks go away without closing).
+  // Drop dead connections (mobile networks go away without closing), but only after 3 missed
+  // beats (~90 s): a PC under heavy load can answer one ping late (ADR 0017).
   const beat = setInterval(() => {
     for (const ws of wss.clients) {
-      if (!ws.isAlive) ws.terminate();
+      if ((ws.missed ?? 0) >= 3) ws.terminate();
       else {
-        ws.isAlive = false;
+        ws.missed = (ws.missed ?? 0) + 1;
         ws.ping();
       }
     }

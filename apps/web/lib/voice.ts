@@ -21,6 +21,23 @@ function recognizer(): (new () => Rec) | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
+/** Voice languages: Indian English by default; kept in this browser. */
+export const VOICE_LANGS: [string, string][] = [['en-IN', 'English (India)'], ['hi-IN', 'हिन्दी (Hindi)'], ['mr-IN', 'मराठी (Marathi)'], ['en-US', 'English (US)']];
+export function voiceLang(): string {
+  try {
+    return localStorage.getItem('magnus.voiceLang') ?? 'en-IN';
+  } catch {
+    return 'en-IN';
+  }
+}
+export function setVoiceLang(l: string): void {
+  try {
+    localStorage.setItem('magnus.voiceLang', l);
+  } catch {
+    // private mode: this visit only
+  }
+}
+
 const WHY: Record<string, string> = {
   'not-allowed': 'Microphone blocked: allow it for this site in the browser.',
   'service-not-allowed': 'Microphone blocked: allow it for this site in the browser.',
@@ -55,16 +72,22 @@ export function useVoice(append: (text: string) => void): { supported: boolean; 
     const R = recognizer();
     if (!R) return;
     const r = new R();
-    r.lang = navigator.language || 'en-US';
-    r.continuous = true;
+    r.lang = voiceLang();
+    // Android Chrome repeats earlier words in continuous mode: there, one phrase per tap.
+    r.continuous = !/Android/i.test(navigator.userAgent);
     r.interimResults = true;
+    let added = '';
     r.onresult = (e) => {
       let live = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i];
         if (!res) continue;
-        if (res.isFinal) add.current(res[0].transcript.trim());
-        else live += res[0].transcript;
+        if (res.isFinal) {
+          const t = res[0].transcript.trim();
+          if (t === '' || t === added) continue;
+          added = t;
+          add.current(t);
+        } else live += res[0].transcript;
       }
       setInterim(live);
     };

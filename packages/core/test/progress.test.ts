@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+// These tests check the fallback rules with Codex first (the default is Antigravity first, ADR 0018).
 import { ask, DEFAULT_BRAIN } from '../src/brain/ask.js';
 import { parseAgyLine, parseCodexLine, type Progress } from '../src/brain/progress.js';
 import type { BrainRunner } from '../src/brain/runners.js';
+const CODEX_FIRST = { ...DEFAULT_BRAIN, order: ['codex', 'antigravity'] as ('codex' | 'antigravity')[] };
 
 // Lines as Codex CLI 0.163 and Antigravity CLI 1.5 printed them on the owner's PC (2026-11-12).
 const CODEX = [
@@ -58,10 +60,33 @@ test('stop: a stopped run is reported as stopped and never handed to the other b
     return { ok: true, answer: 'x', toolCalls: [], callsKnown: true, timedOut: false, ms: 1 };
   };
   const ctl = new AbortController();
-  const running = ask('open YouTube', DEFAULT_BRAIN, { codex, antigravity: agy }, { signal: ctl.signal, onProgress: (p) => steps.push(p) });
+  const running = ask('open YouTube', CODEX_FIRST, { codex, antigravity: agy }, { signal: ctl.signal, onProgress: (p) => steps.push(p) });
   await new Promise((r) => setTimeout(r, 20));
   ctl.abort();
   const r = await running;
   assert.deepEqual([r.ok, r.answer, r.stoppedBecause, seen], [false, 'Stopped by you.', 'you pressed Stop', ['codex']]);
   assert.deepEqual(steps.map((s) => s.kind), ['tool']);
+});
+
+test('progress: a step never shows a task token or a secret argument (ADR 0016)', () => {
+  const line = JSON.stringify({ type: 'item.started', item: { type: 'mcp_tool_call', server: 'magnus', tool: 'magnus__ask_user', arguments: { task_id: 't_1', token: 'fakeTaskToken0000000000', question: 'Which side?' } } });
+  const p = parseCodexLine(line);
+  assert.ok(p.step !== undefined);
+  assert.ok(!p.step.text.includes('fakeTaskToken0000000000'), p.step.text);
+  assert.match(p.step.text, /"token":"…"/);
+  const asString = JSON.stringify({ type: 'item.started', item: { type: 'mcp_tool_call', server: 'magnus', tool: 'x__login', arguments: JSON.stringify({ user: 'me', password: 'hunter22secret' }) } });
+  assert.ok(!(parseCodexLine(asString).step?.text ?? '').includes('hunter22secret'));
+});
+
+test('acp: tool names and permissions (ADR 0018)', async () => {
+  const { acpToolName, pickPermission } = await import('../src/brain/acp.js');
+  assert.equal(acpToolName({ title: 'mcp_magnus_xtraos__drag' }), 'xtraos__drag');
+  assert.equal(acpToolName({ title: 'magnus__arrange_desktop_icons' }), 'magnus__arrange_desktop_icons');
+  assert.equal(acpToolName({ title: 'MCP Tool status', rawInput: { ServerName: 'magnus', ToolName: 'xtraos__status', Arguments: {} } }), 'xtraos__status');
+  assert.equal(acpToolName({ title: 'MCP Tool status', rawInput: { ServerName: 'xtraos', ToolName: 'status' } }), 'xtraos__status');
+  const opts = [{ optionId: 'a', kind: 'allow_once' }, { optionId: 'r', kind: 'reject_once' }];
+  assert.deepEqual(pickPermission({ toolCall: { title: 'mcp_magnus_xtraos__click' }, options: opts }), { outcome: 'selected', optionId: 'a' });
+  assert.deepEqual(pickPermission({ toolCall: { title: 'MCP Tool drag', rawInput: { ServerName: 'magnus', ToolName: 'xtraos__drag' } }, options: opts }), { outcome: 'selected', optionId: 'a' });
+  assert.deepEqual(pickPermission({ toolCall: { title: 'MCP Tool pay', rawInput: { ServerName: 'agentbucket', ToolName: 'wallet__pay' } }, options: opts }), { outcome: 'selected', optionId: 'r' }, 'a tool with __ from another server is refused');
+  assert.deepEqual(pickPermission({ toolCall: { title: 'Run shell command', kind: 'execute' }, options: opts }), { outcome: 'selected', optionId: 'r' }, 'anything outside the hub is refused');
 });

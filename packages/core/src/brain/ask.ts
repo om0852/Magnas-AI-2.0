@@ -2,17 +2,33 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadRegistry } from '../registry.js';
-import { MagnusError, type Env } from '../types.js';
+import { type Effort, MagnusError, type Env } from '../types.js';
 import { brainPrompt, type BrainId } from './prompt.js';
-import { agyRunner, codexRunner, findAgy, findCodex, type BrainRun, type BrainRunner, type Launcher, type RunOptions } from './runners.js';
+import { acpRunner } from './acp.js';
+import { codexRunner, findAgy, findCodex, type BrainRun, type BrainRunner, type Launcher, type RunOptions } from './runners.js';
 
 export interface BrainConfig {
   order: BrainId[];
   servers: string[];
   timeoutSec: number;
+  /** ADR 0014: cheap and quick by default; the owner can raise them in magnus.json. */
+  codexModel: string;
+  codexEffort: Effort;
+  /** Unset: agy's own default. */
+  agyModel?: string;
 }
 
-export const DEFAULT_BRAIN: BrainConfig = { order: ['codex', 'antigravity'], servers: ['xtraos'], timeoutSec: 300 };
+export const DEFAULT_BRAIN: BrainConfig = {
+  // ADR 0018: Antigravity first (through ACP, with the Magnus hub); Codex if it cannot run.
+  order: ['antigravity', 'codex'],
+  // ADR 0016: the desktop, Chrome pages and code questions; only those registered are used.
+  servers: ['xtraos', 'xtradevpilot', 'codebase-trainer'],
+  timeoutSec: 600,
+  // ADR 0014 (amended 2026-11-13): the strongest models this ChatGPT account may use, at medium effort.
+  codexModel: 'gpt-6-luna',
+  codexEffort: 'medium',
+  agyModel: 'gemini-3.8-flash-medium', // owner's choice, 2026-11-13
+};
 
 export interface Attempt {
   brain: BrainId;
@@ -36,8 +52,11 @@ export type BrainSet = Record<BrainId, BrainRunner | null>;
 
 /** The brain settings from the registry, with defaults. */
 export function brainConfig(env: Env): BrainConfig {
-  const b = loadRegistry(env).brain;
-  return { ...DEFAULT_BRAIN, ...(b ?? {}) };
+  const reg = loadRegistry(env);
+  const b = reg.brain;
+  // Without an explicit list, the default servers that this PC has registered (at least xtraos).
+  const have = DEFAULT_BRAIN.servers.filter((s) => s in reg.mcpServers);
+  return { ...DEFAULT_BRAIN, servers: have.length > 0 ? have : ['xtraos'], ...(b ?? {}) };
 }
 
 /**
@@ -54,7 +73,7 @@ export async function ask(task: string, cfg: BrainConfig, brains: BrainSet, opts
       attempts.push({ brain: id, outcome: 'not-installed' });
       continue;
     }
-    const view = id === 'codex' ? 'hub' : 'own';
+    const view = 'hub'; // both brains get the Magnus hub (ADR 0018)
     const run = await runner(brainPrompt(task, cfg.servers, view), cfg.timeoutSec * 1000, opts);
     attempts.push({ brain: id, outcome: run.ok ? 'ok' : 'failed', run });
     if (run.ok) return { ok: true, brain: id, answer: run.answer, attempts };
@@ -85,9 +104,10 @@ export async function ask(task: string, cfg: BrainConfig, brains: BrainSet, opts
 export function realBrains(env: Env, hub: Launcher, servers: readonly string[]): BrainSet {
   const codex = findCodex();
   const agy = findAgy();
+  const cfg = brainConfig(env);
   return {
-    codex: codex ? codexRunner(codex, hub, servers, env) : null,
-    antigravity: agy ? agyRunner(agy) : null,
+    codex: codex ? codexRunner(codex, hub, servers, env, { model: cfg.codexModel, effort: cfg.codexEffort }) : null,
+    antigravity: agy ? acpRunner(agy, hub, servers, env, { ...(cfg.agyModel !== undefined ? { model: cfg.agyModel } : {}), fallbackModel: 'gemini-3.8-flash-high' }) : null,
   };
 }
 
